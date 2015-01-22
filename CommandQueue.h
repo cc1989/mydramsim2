@@ -78,7 +78,7 @@ public:
 	//fields
 	
 	BusPacket3D queues; // 3D array of BusPacket pointers
-	//BusPacket3D writeQueues; // 3D array of write BusPacket pointers
+	BusPacket3D writeQueues; // 3D array of write BusPacket pointers
 	vector< vector<BankState> > &bankStates;
 private:
 	void nextRankAndBank(unsigned &rank, unsigned &bank);
