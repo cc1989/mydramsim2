@@ -132,6 +132,10 @@ extern unsigned JEDEC_DATA_BUS_BITS;
 //Memory Controller related parameters
 extern unsigned TRANS_QUEUE_DEPTH;
 extern unsigned CMD_QUEUE_DEPTH;
+extern unsigned READ_CMD_QUEUE_DEPTH;
+extern unsigned WRITE_CMD_QUEUE_DEPTH;
+extern unsigned WRITE_LOW_THEROLD;
+extern unsigned WRITE_HIGHT_THEROLD;
 
 extern uint64_t EPOCH_LENGTH;
 

@@ -33,8 +33,8 @@
 
 
 
-#ifndef CMDQUEUE_H
-#define CMDQUEUE_H
+#ifndef RWCMDQUEUE_H
+#define RWCMDQUEUE_H
 
 //CommandQueue.h
 //
@@ -51,44 +51,35 @@ using namespace std;
 
 namespace DRAMSim
 {
-class CommandQueue : public SimulatorObject
+class RWCommandQueue : public SimulatorObject
 {
-	CommandQueue();
+	RWCommandQueue();
 	ostream &dramsim_log;
 public:
 	//typedefs
 	typedef vector<BusPacket *> BusPacket1D;
-	typedef vector<BusPacket1D> BusPacket2D;
-	typedef vector<BusPacket2D> BusPacket3D;
 
 	//functions
-	CommandQueue(vector< vector<BankState> > &states, ostream &dramsim_log);
-	virtual ~CommandQueue(); 
+	RWCommandQueue(vector< vector<BankState> > &states, ostream &dramsim_log);
+	virtual ~RWCommandQueue(); 
 
-	void enqueue(BusPacket *newBusPacket);
+	void enqueue(bool isWrite, BusPacket *newBusPacket);
 	bool pop(BusPacket **busPacket);
-	bool hasRoomFor(unsigned numberToEnqueue, unsigned rank, unsigned bank);
+	bool hasRoomFor(bool isWrite, unsigned numberToEnqueue, unsigned rank, unsigned bank);
+	vector<BusPacket *> &getCommandQueue();
 	bool isIssuable(BusPacket *busPacket);
 	bool isEmpty(unsigned rank);
 	void needRefresh(unsigned rank);
 	void print();
 	void update(); //SimulatorObject requirement
-	vector<BusPacket *> &getCommandQueue(unsigned rank, unsigned bank);
 
-	//fields
 	
-	BusPacket3D queues; // 3D array of BusPacket pointers
-	//BusPacket3D writeQueues; // 3D array of write BusPacket pointers
+	BusPacket1D readQueues; // 1D array of BusPacket pointers
+	BusPacket1D writeQueues; // 1D array of BusPacket pointers
 	vector< vector<BankState> > &bankStates;
 private:
 	void nextRankAndBank(unsigned &rank, unsigned &bank);
 	//fields
-	unsigned nextBank;
-	unsigned nextRank;
-
-	unsigned nextBankPRE;
-	unsigned nextRankPRE;
-
 	unsigned refreshRank;
 	bool refreshWaiting;
 
@@ -96,6 +87,8 @@ private:
 	vector< vector<unsigned> > rowAccessCounters;
 
 	bool sendAct;
+	bool preIsWrite;
+	bool curIsWrite;
 };
 }
 

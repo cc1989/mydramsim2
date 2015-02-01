@@ -211,6 +211,7 @@ void MemoryController::update()
 			//inform upper levels that a write is done
 			if (parentMemorySystem->WriteDataDone!=NULL)
 			{
+				//PRINT(outgoingDataPacket->physicalAddress);
 				(*parentMemorySystem->WriteDataDone)(parentMemorySystem->systemID,outgoingDataPacket->physicalAddress, currentClockCycle);
 			}
 
@@ -505,7 +506,8 @@ void MemoryController::update()
 
 		//if we have room, break up the transaction into the appropriate commands
 		//and add them to the command queue
-		if (commandQueue.hasRoomFor(2, newTransactionRank, newTransactionBank))
+		bool isWrite = transaction->transactionType == DATA_READ ? false : true;
+		if (commandQueue.hasRoomFor(isWrite, 2, newTransactionRank, newTransactionBank))
 		{
 			if (DEBUG_ADDR_MAP) 
 			{
@@ -542,8 +544,8 @@ void MemoryController::update()
 
 
 
-			commandQueue.enqueue(ACTcommand);
-			commandQueue.enqueue(command);
+			commandQueue.enqueue(isWrite, ACTcommand);
+			commandQueue.enqueue(isWrite, command);
 
 			// If we have a read, save the transaction so when the data comes back
 			// in a bus packet, we can staple it back into a transaction and return it

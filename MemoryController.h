@@ -40,7 +40,8 @@
 #include "SimulatorObject.h"
 #include "Transaction.h"
 #include "SystemConfiguration.h"
-#include "CommandQueue.h"
+//#include "CommandQueue.h"
+#include "RWCommandQueue.h"
 #include "BusPacket.h"
 #include "BankState.h"
 #include "Rank.h"
@@ -81,7 +82,7 @@ private:
 	//fields
 	MemorySystem *parentMemorySystem;
 
-	CommandQueue commandQueue;
+	RWCommandQueue commandQueue;
 	BusPacket *poppedBusPacket;
 	vector<unsigned>refreshCountdown;
 	vector<BusPacket *> writeDataToSend;
