@@ -89,6 +89,8 @@ private:
 	bool sendAct;
 	bool preIsWrite;
 	bool curIsWrite;
+	unsigned nextRankPRE;
+	unsigned nextBankPRE;
 };
 }
 

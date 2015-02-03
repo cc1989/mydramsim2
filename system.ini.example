@@ -18,10 +18,10 @@ WRITE_HIGHT_THEROLD=60    ;写队列low therold
 
 
 ;for true/false, please use all lowercase
-DEBUG_TRANS_Q=true
-DEBUG_CMD_Q=true
-DEBUG_ADDR_MAP=true
-DEBUG_BUS=true
+DEBUG_TRANS_Q=false
+DEBUG_CMD_Q=false
+DEBUG_ADDR_MAP=false
+DEBUG_BUS=false
 DEBUG_BANKSTATE=false
 DEBUG_BANKS=false
 DEBUG_POWER=false

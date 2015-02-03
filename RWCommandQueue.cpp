@@ -53,7 +53,9 @@ RWCommandQueue::RWCommandQueue(vector< vector<BankState> > &states, ostream &dra
 		refreshWaiting(false),
 		sendAct(true),
 		preIsWrite(false),
-		curIsWrite(false)
+		curIsWrite(false),
+		nextRankPRE(0),
+		nextBankPRE(0)
 {
 	//set here to avoid compile errors
 	currentClockCycle = 0;
@@ -293,34 +295,38 @@ bool RWCommandQueue::pop(BusPacket **busPacket)
 				//search for banks to close
 				bool sendingPRE = false;
 				vector <BusPacket *> &queue = getCommandQueue();
-				bool found = false;
-				for (size_t i = 0; i < queue.size(); i++)
+				unsigned startingRank = nextRankPRE;
+				unsigned startingBank = nextBankPRE;
+				do
 				{
+					bool found = false;
 					//if there is something going to that bank and row, then we don't want to send a PRE
-					if (bankStates[queue[i]->rank][queue[i]->bank].currentBankState == RowActive) 
+					if (bankStates[nextRankPRE][nextBankPRE].currentBankState == RowActive) 
 					{
-						for (size_t j = i; j < queue.size(); j++)
+						for (size_t i = 0; i < queue.size(); i++)
 						{
-							if (queue[j]->rank == queue[i]->rank && queue[j]->bank == queue[i]->bank &&
-									queue[j]->row == bankStates[queue[j]->rank][queue[j]->bank].openRowAddress)
+							if (queue[i]->rank == nextRankPRE && queue[i]->bank == nextBankPRE && 
+									queue[i]->row == bankStates[nextRankPRE][nextBankPRE].openRowAddress)
 							found = true;
 							break;
 						}
 						//if nothing found going to that bank and row or too many accesses have happend, close it
-						if (!found || rowAccessCounters[queue[i]->rank][queue[i]->bank]>=TOTAL_ROW_ACCESSES)
+						if (!found || rowAccessCounters[nextRankPRE][nextBankPRE]==TOTAL_ROW_ACCESSES)
 						{
-							if (currentClockCycle >= bankStates[queue[i]->rank][queue[i]->bank].nextPrecharge)
+							if (currentClockCycle >= bankStates[nextRankPRE][nextBankPRE].nextPrecharge)
 							{
 								sendingPRE = true;
-								rowAccessCounters[queue[i]->rank][queue[i]->bank] = 0;
-								*busPacket = new BusPacket(PRECHARGE, 0, 0, 0, queue[i]->rank, queue[i]->bank, 0, dramsim_log);
+								rowAccessCounters[nextRankPRE][nextBankPRE] = 0;
+								*busPacket = new BusPacket(PRECHARGE, 0, 0, 0, nextRankPRE, nextBankPRE, 0, dramsim_log);
 								break;
 							}
 						}
 					}
+					nextRankAndBank(nextRankPRE, nextBankPRE);
 				}
-				//if no PREs could be sent, just return false
-				if (!sendingPRE) return false;
+				while (!(startingRank == nextRankPRE && startingBank == nextBankPRE));
+				if (!sendingPRE)
+					return false;
 			}
 		}
 		
@@ -469,4 +475,16 @@ bool RWCommandQueue::isEmpty(unsigned rank)
 		if (writeQueues[i]->rank == rank)
 			return false;
 	return true;
+}
+
+void RWCommandQueue::nextRankAndBank(unsigned &rank, unsigned &bank)
+{
+	bank++;
+	if (bank == NUM_BANKS)
+	{
+		bank = 0;
+		rank++;
+		if (rank == NUM_RANKS)
+			rank = 0;
+	}
 }
