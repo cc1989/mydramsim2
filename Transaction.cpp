@@ -48,6 +48,12 @@ Transaction::Transaction(TransactionType transType, uint64_t addr, void *dat) :
 	address(addr),
 	data(dat)
 {}
+Transaction::Transaction(TransactionType transType, uint64_t addr, void *dat, uint8_t _coreId) :
+	transactionType(transType),
+	address(addr),
+	data(dat),
+	coreId(_coreId)
+{}
 
 Transaction::Transaction(const Transaction &t)
 	: transactionType(t.transactionType)
@@ -55,6 +61,7 @@ Transaction::Transaction(const Transaction &t)
 	  , data(NULL)
 	  , timeAdded(t.timeAdded)
 	  , timeReturned(t.timeReturned)
+	  , coreId(t.coreId)
 {
 	#ifndef NO_STORAGE
 	ERROR("Data storage is really outdated and these copies happen in an \n improper way, which will eventually cause problems. Please send an \n email to dramninjas [at] gmail [dot] com if you need data storage");

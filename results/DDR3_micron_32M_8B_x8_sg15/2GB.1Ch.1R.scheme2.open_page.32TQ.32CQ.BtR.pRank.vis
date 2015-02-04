@@ -14,7 +14,7 @@ QUANTUM=1000000
 USE_LOW_POWER=true
 TOTAL_ROW_ACCESSES=4
 ROW_BUFFER_POLICY=open_page
-SCHEDULING_POLICY=rank_then_bank_round_robin
+SCHEDULING_POLICY=par-bs
 ADDRESS_MAPPING_SCHEME=scheme2
 QUEUING_STRUCTURE=per_rank
 DEBUG_TRANS_Q=false
@@ -69,14 +69,14 @@ IDD7=460
 Vdd=1.5
 !!EPOCH_DATA
 ms,Background_Power[0][0],ACT_PRE_Power[0][0],Burst_Power[0][0],Refresh_Power[0][0],Bandwidth[0][0][0],Average_Latency[0][0][0],Bandwidth[0][0][1],Average_Latency[0][0][1],Bandwidth[0][0][2],Average_Latency[0][0][2],Bandwidth[0][0][3],Average_Latency[0][0][3],Bandwidth[0][0][4],Average_Latency[0][0][4],Bandwidth[0][0][5],Average_Latency[0][0][5],Bandwidth[0][0][6],Average_Latency[0][0][6],Bandwidth[0][0][7],Average_Latency[0][0][7],Rank_Aggregate_Bandwidth[0][0],Rank_Average_Bandwidth[0][0],Aggregate_Bandwidth[0],Average_Bandwidth[0],
-0.15,0.861048,0.07488,0.0334224,0.0524514,0.0186761,47.5286,0.0150998,42.4,0.0234445,43.2188,0.0162919,43.0455,0.0226498,43.875,0.0186761,42.8108,0.0210603,47.1,0.0222524,45.6628,0.158151,0.158151,0.158151,0.0197689,
-0.155847,0.84,0,0,0,0,-nan,0,-nan,0,-nan,0,-nan,0,-nan,0,-nan,0,-nan,0,-nan,0,0,0,0,!!HISTOGRAM_DATA
-10=1
-20=240
-30=42
-40=10
-50=14
-60=1
-110=1
-120=1
+0.0348105,0.841396,0.587244,0.248449,0.0475822,0.150679,43.1591,0.160952,47.0904,0.14383,42.6071,0.164377,43.7188,0.167802,42.352,0.150679,46.7386,0.154103,43.5833,0.154103,45.1833,1.24653,1.24653,1.24653,0.155816,!!HISTOGRAM_DATA
+20=625
+30=64
+40=17
+50=11
+60=3
+90=2
+110=2
+120=2
+130=2
 

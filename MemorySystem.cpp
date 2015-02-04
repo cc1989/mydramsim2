@@ -195,7 +195,7 @@ bool MemorySystem::addTransaction(bool isWrite, uint64_t addr)
 bool MemorySystem::addTransaction(bool isWrite, uint64_t addr, uint8_t coreId)
 {
 	TransactionType type = isWrite ? DATA_WRITE : DATA_READ;
-	Transaction *trans = new Transaction(type,addr,NULL);
+	Transaction *trans = new Transaction(type,addr,NULL, coreId);
 	// push_back in memoryController will make a copy of this during
 	// addTransaction so it's kosher for the reference to be local 
 

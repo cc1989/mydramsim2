@@ -55,7 +55,24 @@ BusPacket::BusPacket(BusPacketType packtype, uint64_t physicalAddr,
 	bank(b),
 	rank(r),
 	physicalAddress(physicalAddr),
-	data(dat)
+	data(dat),
+	threadId(0),
+	marked(false)
+{}
+BusPacket::BusPacket(BusPacketType packtype, uint64_t physicalAddr, 
+		unsigned col, unsigned rw, unsigned r, unsigned b, void *dat, 
+		unsigned _threadId,
+		ostream &dramsim_log_) :
+	dramsim_log(dramsim_log_),
+	busPacketType(packtype),
+	column(col),
+	row(rw),
+	bank(b),
+	rank(r),
+	physicalAddress(physicalAddr),
+	data(dat),
+	threadId(_threadId),
+	marked(false)
 {}
 
 void BusPacket::print(uint64_t currentClockCycle, bool dataStart)
@@ -107,6 +124,7 @@ void BusPacket::print()
 	}
 	else
 	{
+		PRINT("threadId [" << threadId << "]");
 		switch (busPacketType)
 		{
 		case READ:

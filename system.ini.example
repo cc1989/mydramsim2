@@ -6,24 +6,25 @@ TRANS_QUEUE_DEPTH=32					; transaction queue, i.e., CPU-level commands such as: 
 CMD_QUEUE_DEPTH=32                     ; command queue, i.e., DRAM-level commands such as: CAS 544, RAS 4
 EPOCH_LENGTH=100000						; length of an epoch in cycles (granularity of simulation)
 ROW_BUFFER_POLICY=open_page 		; close_page or open_page
-ADDRESS_MAPPING_SCHEME=scheme2	;valid schemes 1-7; For multiple independent channels, use scheme7 since it has the most parallelism 
-SCHEDULING_POLICY=rank_then_bank_round_robin  ; bank_then_rank_round_robin or rank_then_bank_round_robin 
+ADDRESS_MAPPING_SCHEME=scheme8	;valid schemes 1-7; For multiple independent channels, use scheme7 since it has the most parallelism 
+SCHEDULING_POLICY=par-bs; bank_then_rank_round_robin or rank_then_bank_round_robin 
 QUEUING_STRUCTURE=per_rank			;per_rank or per_rank_per_bank
 QUANTUM=1000000     ;MPKI统计时间段
 READ_CMD_QUEUE_DEPTH=64    ;读队列长度
 WRITE_CMD_QUEUE_DEPTH=64    ;队列长度
 WRITE_LOW_THEROLD=10    ;写队列low therold
 WRITE_HIGHT_THEROLD=60    ;写队列low therold
-
+MARKING_CAP=4     ;
+NUM_THREAD=2      ;
 
 
 ;for true/false, please use all lowercase
-DEBUG_TRANS_Q=false
-DEBUG_CMD_Q=false
-DEBUG_ADDR_MAP=false
+DEBUG_TRANS_Q=true
+DEBUG_CMD_Q=true
+DEBUG_ADDR_MAP=true
 DEBUG_BUS=false
-DEBUG_BANKSTATE=false
-DEBUG_BANKS=false
+DEBUG_BANKSTATE=true
+DEBUG_BANKS=true
 DEBUG_POWER=false
 VIS_FILE_OUTPUT=true
 

@@ -105,6 +105,8 @@ unsigned READ_CMD_QUEUE_DEPTH;
 unsigned WRITE_CMD_QUEUE_DEPTH;
 unsigned WRITE_LOW_THEROLD;
 unsigned WRITE_HIGHT_THEROLD;
+unsigned MARKING_CAP;
+unsigned NUM_THREAD;
 
 //cycles within an epoch
 uint64_t EPOCH_LENGTH;
@@ -196,6 +198,8 @@ static ConfigMap configMap[] =
 	DEFINE_UINT_PARAM(WRITE_CMD_QUEUE_DEPTH,SYS_PARAM),
 	DEFINE_UINT_PARAM(WRITE_LOW_THEROLD,SYS_PARAM),
 	DEFINE_UINT_PARAM(WRITE_HIGHT_THEROLD,SYS_PARAM),
+	DEFINE_UINT_PARAM(MARKING_CAP,SYS_PARAM),
+	DEFINE_UINT_PARAM(NUM_THREAD,SYS_PARAM),
 
 	DEFINE_UINT64_PARAM(EPOCH_LENGTH,SYS_PARAM),
 	DEFINE_UINT64_PARAM(QUANTUM,SYS_PARAM),
@@ -579,6 +583,14 @@ void IniReader::InitEnumsFromStrings()
 			DEBUG("ADDR SCHEME: 7");
 		}
 	}
+	else if (ADDRESS_MAPPING_SCHEME == "scheme8")
+	{
+		addressMappingScheme = Scheme8;
+		if (DEBUG_INI_READER) 
+		{
+			DEBUG("ADDR SCHEME: 8");
+		}
+	}
 	else
 	{
 		cout << "WARNING: unknown address mapping scheme '"<<ADDRESS_MAPPING_SCHEME<<"'; valid values are 'scheme1'...'scheme7'. Defaulting to scheme1"<<endl;
@@ -643,6 +655,22 @@ void IniReader::InitEnumsFromStrings()
 		if (DEBUG_INI_READER) 
 		{
 			DEBUG("SCHEDULING: Bank Then Rank");
+		}
+	}
+	else if (SCHEDULING_POLICY == "fr-fcfs")
+	{
+		schedulingPolicy = FRFCFS;
+		if (DEBUG_INI_READER) 
+		{
+			DEBUG("SCHEDULING: frfcfs");
+		}
+	}
+	else if (SCHEDULING_POLICY == "par-bs")
+	{
+		schedulingPolicy = PARBS;
+		if (DEBUG_INI_READER) 
+		{
+			DEBUG("SCHEDULING: PARBS");
 		}
 	}
 	else

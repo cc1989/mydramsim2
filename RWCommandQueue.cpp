@@ -62,7 +62,26 @@ RWCommandQueue::RWCommandQueue(vector< vector<BankState> > &states, ostream &dra
 
 	//vector of counters used to ensure rows don't stay open too long
 	rowAccessCounters = vector< vector<unsigned> >(NUM_RANKS, vector<unsigned>(NUM_BANKS,0));
-
+	bankAccessFlag = vector< vector<bool> >(NUM_RANKS, vector<bool>(NUM_BANKS,false));
+	for (size_t i = 0; i < NUM_THREAD; i++)
+	{
+		BusPacket3D bp3d = BusPacket3D();
+		for (size_t j = 0; j < NUM_RANKS; j++)
+		{
+			BusPacket2D bp2d = BusPacket2D();
+			for (size_t k = 0; k < NUM_BANKS; k++)
+			{
+				BusPacket1D bp1d = BusPacket1D();
+				bp2d.push_back(bp1d);
+			}
+			bp3d.push_back(bp2d);
+		}
+		reqsMarkedInBankPerThread.push_back(bp3d);
+	}
+	reqsMarkedPerThread = vector<unsigned>(NUM_THREAD, 0);
+	threadPriority = vector<unsigned>(NUM_THREAD, 0);
+	maxRulPerthread = vector<unsigned>(NUM_THREAD, 0);
+	totalMarkedRequests = 0;	
 	//FOUR-bank activation window
 	//	this will count the number of activations within a given window
 	//	(decrementing counter)
@@ -116,10 +135,411 @@ vector<BusPacket *> & RWCommandQueue::getCommandQueue()
 		return writeQueues;
 	return readQueues;
 }
+//par-bs scheduling
+bool RWCommandQueue::scheduleParbs(BusPacket **busPacket)
+{
+	if (totalMarkedRequests == 0)
+	{
+		//新的batch开始	
+		//标记请求
+		PRINT("新的batch开始");
+		while (!readQueues.empty())	
+		{
+			BusPacket* bp = readQueues[0];	
+			if (reqsMarkedInBankPerThread[bp->threadId][bp->rank][bp->bank].size() < MARKING_CAP)
+			{
+				reqsMarkedInBankPerThread[bp->threadId][bp->rank][bp->bank].push_back(bp);
+				reqsMarkedPerThread[bp->threadId]++;
+				totalMarkedRequests++;
+				readQueues.erase(readQueues.begin());
+			}
+		}
+		//统计Max Rule
+		for (size_t i = 0;  i < NUM_THREAD; i++)
+		{
+			maxRulPerthread[i] = 0;
+			for (size_t j = 0; j < NUM_RANKS; j++)
+				for (size_t k = 0; k < NUM_BANKS; k++)
+					if (reqsMarkedInBankPerThread[i][j][k].size() > maxRulPerthread[i])
+						maxRulPerthread[i] = reqsMarkedInBankPerThread[i][j][k].size();
+		}
+		//获取排名
+		threadPriority.clear();
+		for (size_t i = 0; i < NUM_THREAD; i++)
+		{
+			unsigned min = maxRulPerthread[0];	
+			size_t p = 0;
+			for (size_t j = 1; j < NUM_THREAD; j++)
+				if (maxRulPerthread[j] < min)
+				{
+					min = maxRulPerthread[j];	
+					p = j;
+				}
+			for (size_t j = 0; j < NUM_THREAD; j++)	
+				if (j != p && maxRulPerthread[j] == min && reqsMarkedPerThread[j] < reqsMarkedPerThread[p])
+					p = j;
+			threadPriority.push_back(p);
+			maxRulPerthread[p] = 0xffff;
+		}
+	}
+	PRINT("print marked queue");
+	for (size_t i = 0; i < NUM_THREAD; i++)
+	{
+		PRINT(reqsMarkedPerThread[i]);
+		for (size_t j = 0; j < NUM_RANKS; j++)
+			for (size_t k = 0; k < NUM_BANKS; k++)
+				for (size_t ii = 0; ii < reqsMarkedInBankPerThread[i][j][k].size(); ii++)
+					reqsMarkedInBankPerThread[i][j][k][ii]->print();
+		PRINT("\n");
+	}
+	bool sendingREForPRE = false;
+	if (refreshWaiting)
+	{
+		bool sendREF = true;
+		//make sure all banks idle and timing met for a REF
+		for (size_t b=0;b<NUM_BANKS;b++)
+		{
+			//if a bank is active we can't send a REF yet
+			if (bankStates[refreshRank][b].currentBankState == RowActive)
+			{
+				sendREF = false;
+				bool closeRow = true;
+				//search for commands going to an open row
+				for (size_t t = 0; t < NUM_THREAD; t++)
+				{
+					vector <BusPacket *> &refreshQueue = reqsMarkedInBankPerThread[threadPriority[t]][refreshRank][b];
+					if (refreshQueue.empty())
+						continue;
+					for (size_t j=0;j<refreshQueue.size();j++)
+					{
+						BusPacket *packet = refreshQueue[j];
+						//if a command in the queue is going to the same row . . .
+						if (refreshRank == packet->rank && bankStates[refreshRank][b].openRowAddress == packet->row &&
+								b == packet->bank)
+						{
+							// . . . and is not an activate . . .
+							if (packet->busPacketType != ACTIVATE)
+							{
+								closeRow = false;
+								// . . . and can be issued . . .
+								if (isIssuable(packet))
+								{
+									//send it out
+									*busPacket = packet;
+									refreshQueue.erase(refreshQueue.begin()+j);
+									reqsMarkedPerThread[threadPriority[t]]--;
+									totalMarkedRequests--;
+									sendingREForPRE = true;
+								}
+								break;
+							}
+							else //command is an activate，优先刷新
+							{
+								//if we've encountered another act, no other command will be of interest
+								break;
+							}
+						}
+					}
+					break;
+				}
+				//if the bank is open and we are allowed to close it, then send a PRE
+				if (closeRow && currentClockCycle >= bankStates[refreshRank][b].nextPrecharge)
+				{
+					rowAccessCounters[refreshRank][b]=0;
+					*busPacket = new BusPacket(PRECHARGE, 0, 0, 0, refreshRank, b, 0, dramsim_log);
+					sendingREForPRE = true;
+				}
+				break;
+			}
+			//	NOTE: the next ACT and next REF can be issued at the same
+			//				point in the future, so just use nextActivate field instead of
+			//				creating a nextRefresh field
+			else if (bankStates[refreshRank][b].nextActivate > currentClockCycle) //and this bank doesn't have an open row
+			{
+				sendREF = false;
+				break;
+			}
+		}
+
+		//if there are no open banks and timing has been met, send out the refresh
+		//	reset flags and rank pointer
+		if (sendREF && bankStates[refreshRank][0].currentBankState != PowerDown)
+		{
+			*busPacket = new BusPacket(REFRESH, 0, 0, 0, refreshRank, 0, 0, dramsim_log);
+			refreshRank = -1;
+			refreshWaiting = false;
+			sendingREForPRE = true;
+		}
+	}
+	if (sendingREForPRE)
+		return true;
+	for (size_t i = 0; i < NUM_RANKS; i++)
+		for (size_t j = 0; j < NUM_BANKS; j++)
+			bankAccessFlag[i][j] = false;
+	//根据排名发送包
+	bool foundIssuable = false;
+	for (size_t i = 0; i < NUM_THREAD; i++)	
+	{
+		unsigned threadId = threadPriority[i];	
+		//这个线程还有包
+		if (reqsMarkedPerThread[threadId] > 0)
+		{
+			for (size_t j = 0; j < NUM_RANKS; j++)		
+			{
+				if (j == refreshRank && refreshWaiting)
+					continue;
+				for(size_t k = 0; k < NUM_BANKS; k++)	
+				{
+					if (bankAccessFlag[j][k])  //前面已经有请求了
+						continue;
+					vector<BusPacket *> &queue = reqsMarkedInBankPerThread[threadId][j][k];
+					//make sure there is something there first
+					if (!queue.empty())
+					{
+						PRINT("queue not empty! " << bankStates[j][k].nextRead);
+						queue[0]->print();
+						bankAccessFlag[j][k] = true;
+						for (size_t ii =0; ii < queue.size(); ii++)
+						{
+							BusPacket *packet = queue[ii];
+							if (isIssuable(packet))
+							{
+								//check for dependencies
+								bool dependencyFound = false;
+								for (size_t jj = 0; jj < ii; jj++)
+								{
+									BusPacket *prevPacket = queue[jj];
+									if (prevPacket->busPacketType != ACTIVATE && 
+											prevPacket->row == packet->row)
+									{
+										dependencyFound = true;
+										break;
+									}
+								}
+								if (dependencyFound) continue;
+								*busPacket = packet;
+								//if the bus packet before is an activate, that is the act that was
+								//	paired with the column access we are removing, so we have to remove
+								//	that activate as well (check i>0 because if i==0 then theres nothing before it)
+								if (ii > 0 && queue[ii-1]->busPacketType == ACTIVATE)
+								{
+									rowAccessCounters[(*busPacket)->rank][(*busPacket)->bank]++;
+									reqsMarkedPerThread[threadId] -= 2;
+									totalMarkedRequests -= 2;
+									// i is being returned, but i-1 is being thrown away, so must delete it here 
+									delete (queue[ii-1]);
+
+									// remove both i-1 (the activate) and i (we've saved the pointer in *busPacket)
+									queue.erase(queue.begin()+ii-1,queue.begin()+ii+1);
+								}
+								else // there's no activate before this packet
+								{
+									//or just remove the one bus packet
+									reqsMarkedPerThread[threadId]--;
+									totalMarkedRequests--;
+									queue.erase(queue.begin()+ii);
+								}
+
+								foundIssuable = true;
+								break;
+							}
+						}
+					}
+					if (foundIssuable)
+						break;
+				}
+				if (foundIssuable)
+					break;
+			}
+			if (foundIssuable)
+				break;
+		}
+		//当前线程没有请求，处理下一个线程请求
+	}
+	if (foundIssuable)
+	{
+		if ((*busPacket)->busPacketType==ACTIVATE)
+		{
+			tFAWCountdown[(*busPacket)->rank].push_back(tFAW);
+		}
+		return true;
+	}
+	/*
+	//给那些没有等待的marked请求的bank发送未标记缓存中的请求，根据fr-fcfs	
+	for (size_t i = 0; i < NUM_RANKS; i++)	
+	{
+		std::cout << "给那些没有等待的marked请求的bank发送未标记缓存中的请求，根据fr-fcfs" << std::endl;
+		if (i == refreshRank && refreshWaiting)
+			continue;
+		for (size_t j = 0; j < NUM_BANKS; j++)	
+		{
+			if (bankAccessFlag[i][j] == false)
+			{
+				vector<BusPacket *>& queue= getCommandQueue();			
+				for (size_t k = 0; k < queue.size(); k++)
+				{
+					BusPacket *packet = queue[k];
+					if (!(packet->rank == i && packet->bank == j))
+						continue;
+					if (isIssuable(packet))
+					{
+						//check for dependencies
+						bool dependencyFound = false;
+						for (size_t ii = 0; ii < k; ii++)
+						{
+							BusPacket *prevPacket = queue[ii];
+							if (prevPacket->busPacketType != ACTIVATE && 
+									prevPacket->rank == packet->rank &&
+									prevPacket->bank == packet->bank &&
+									prevPacket->row == packet->row)
+							{
+								dependencyFound = true;
+								break;
+							}
+						}
+						if (dependencyFound) continue;
+
+						*busPacket = packet;
+
+						//if the bus packet before is an activate, that is the act that was
+						//	paired with the column access we are removing, so we have to remove
+						//	that activate as well (check i>0 because if i==0 then theres nothing before it)
+						if (k >0 && queue[k-1]->busPacketType == ACTIVATE)
+						{
+							rowAccessCounters[(*busPacket)->rank][(*busPacket)->bank]++;
+							// i is being returned, but i-1 is being thrown away, so must delete it here 
+							delete (queue[k-1]);
+
+							// remove both i-1 (the activate) and i (we've saved the pointer in *busPacket)
+							queue.erase(queue.begin()+k-1,queue.begin()+k+1);
+						}
+						else // there's no activate before this packet
+						{
+							//or just remove the one bus packet
+							queue.erase(queue.begin()+k);
+						}
+
+						foundIssuable = true;
+						break;
+					}
+				}
+			}
+			if (foundIssuable)
+				break;
+		}
+		if (foundIssuable)
+			break;
+	}
+	if (foundIssuable)
+	{
+		if ((*busPacket)->busPacketType==ACTIVATE)
+		{
+			tFAWCountdown[(*busPacket)->rank].push_back(tFAW);
+		}
+		return true;
+	}*/
+	//没有可发送的包，看看能否发送precharge
+	for (size_t i = 0; i < NUM_RANKS; i++)
+		for (size_t j = 0; j < NUM_BANKS; j++)
+			bankAccessFlag[i][j] = false;
+	bool sendingPRE = false;
+	for (size_t i = 0; i < NUM_THREAD; i++)	
+	{
+		unsigned threadId = threadPriority[i];	
+		//这个线程还有包
+		if (reqsMarkedPerThread[threadId] > 0)
+		{
+			for (size_t j = 0; j < NUM_RANKS; j++)		
+			{
+				for(size_t k = 0; k < NUM_BANKS; k++)	
+				{
+					vector<BusPacket *> &queue = reqsMarkedInBankPerThread[threadId][j][k];
+					if (queue.empty())
+						continue;
+					if (bankAccessFlag[j][k])  //前面已经访问了,不能关闭
+						continue;
+					bankAccessFlag[j][k] = true;
+					bool found = false;
+					//if there is something going to that bank and row, then we don't want to send a PRE
+					if (bankStates[j][k].currentBankState == RowActive) 
+					{
+						for (size_t ii = 0; ii < queue.size(); ii++)
+						{
+							if (queue[ii]->row == bankStates[j][k].openRowAddress)
+							{
+								found = true;
+								break;
+							}
+						}
+						//if nothing found going to that bank and row or too many accesses have happend, close it
+						if (!found || rowAccessCounters[j][k]==TOTAL_ROW_ACCESSES)
+						{
+							if (currentClockCycle >= bankStates[j][k].nextPrecharge)
+							{
+								sendingPRE = true;
+								rowAccessCounters[j][k] = 0;
+								*busPacket = new BusPacket(PRECHARGE, 0, 0, 0, j, k, 0, dramsim_log);
+								break;
+							}
+						}
+					}
+				}
+				if (sendingPRE)
+					break;
+			}
+			if (sendingPRE)
+				break;
+		}
+	}
+	/*
+	if (sendingPRE)
+		return true;
+	for (size_t i = 0; i < NUM_RANKS; i++)	
+	{
+		for (size_t j = 0; j < NUM_BANKS; j++)	
+		{
+			if (bankAccessFlag[i][j] == false)
+			{
+				if (bankStates[i][j].currentBankState == RowActive) 
+				{
+					bool found = false;
+					vector<BusPacket*>& queue = getCommandQueue();
+					for (size_t ii = 0; ii < queue.size(); ii++)
+					{
+						if (queue[ii]->rank == i && queue[ii]->bank == j && 
+								queue[ii]->row == bankStates[i][j].openRowAddress)
+						{
+							found = true;
+							break;
+						}
+					}
+					//if nothing found going to that bank and row or too many accesses have happend, close it
+					if (!found || rowAccessCounters[i][j]==TOTAL_ROW_ACCESSES)
+					{
+						if (currentClockCycle >= bankStates[i][j].nextPrecharge)
+						{
+							sendingPRE = true;
+							rowAccessCounters[i][j] = 0;
+							*busPacket = new BusPacket(PRECHARGE, 0, 0, 0, i, j, 0, dramsim_log);
+							break;
+						}
+					}
+				}
+			}
+		}
+		if (sendingPRE)
+			break;
+	}*/
+	if (!sendingPRE)
+		return false;
+	return true;
+}
+
 //Removes the next item from the command queue based on the system's
 //command scheduling policy
 bool RWCommandQueue::pop(BusPacket **busPacket)
 {
+	PRINT("pop");
 	//this can be done here because pop() is called every clock cycle by the parent MemoryController
 	//	figures out the sliding window requirement for tFAW
 	//
@@ -147,7 +567,7 @@ bool RWCommandQueue::pop(BusPacket **busPacket)
 		 Then it looks for data packets
 		 Otherwise, it starts looking for rows to close (in open page)
 	*/
-	if (readQueues.empty() || writeQueues.size() >= WRITE_HIGHT_THEROLD || 
+	if ((readQueues.empty() && totalMarkedRequests == 0) || writeQueues.size() >= WRITE_HIGHT_THEROLD || 
 			(preIsWrite && writeQueues.size() >= WRITE_LOW_THEROLD))
 		preIsWrite = curIsWrite = true;
 	else
@@ -157,6 +577,8 @@ bool RWCommandQueue::pop(BusPacket **busPacket)
 	}
 	else if (rowBufferPolicy==OpenPage)
 	{
+		if (!curIsWrite && schedulingPolicy == PARBS)
+			return scheduleParbs(busPacket);
 		bool sendingREForPRE = false;
 		if (refreshWaiting)
 		{

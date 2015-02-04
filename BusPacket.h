@@ -64,9 +64,13 @@ public:
 	unsigned rank;
 	uint64_t physicalAddress;
 	void *data;
+	unsigned threadId;
+	bool marked;
+	int priority;
 
 	//Functions
 	BusPacket(BusPacketType packtype, uint64_t physicalAddr, unsigned col, unsigned rw, unsigned r, unsigned b, void *dat, ostream &dramsim_log_);
+	BusPacket(BusPacketType packtype, uint64_t physicalAddr, unsigned col, unsigned rw, unsigned r, unsigned b, void *dat, unsigned _threadId, ostream &dramsim_log_);
 
 	void print();
 	void print(uint64_t currentClockCycle, bool dataStart);

@@ -136,6 +136,8 @@ extern unsigned READ_CMD_QUEUE_DEPTH;
 extern unsigned WRITE_CMD_QUEUE_DEPTH;
 extern unsigned WRITE_LOW_THEROLD;
 extern unsigned WRITE_HIGHT_THEROLD;
+extern unsigned MARKING_CAP;
+extern unsigned NUM_THREAD;
 
 extern uint64_t EPOCH_LENGTH;
 
@@ -161,7 +163,8 @@ enum AddressMappingScheme
 	Scheme4,
 	Scheme5,
 	Scheme6,
-	Scheme7
+	Scheme7,
+	Scheme8
 };
 
 // used in MemoryController and CommandQueue
@@ -181,7 +184,9 @@ enum QueuingStructure
 enum SchedulingPolicy
 {
 	RankThenBankRoundRobin,
-	BankThenRankRoundRobin
+	BankThenRankRoundRobin,
+	FRFCFS,
+	PARBS
 };
 
 

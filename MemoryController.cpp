@@ -534,13 +534,13 @@ void MemoryController::update()
 			//create activate command to the row we just translated
 			BusPacket *ACTcommand = new BusPacket(ACTIVATE, transaction->address,
 					newTransactionColumn, newTransactionRow, newTransactionRank,
-					newTransactionBank, 0, dramsim_log);
+					newTransactionBank, 0, transaction->coreId, dramsim_log);
 
 			//create read or write command and enqueue it
 			BusPacketType bpType = transaction->getBusPacketType();
 			BusPacket *command = new BusPacket(bpType, transaction->address,
 					newTransactionColumn, newTransactionRow, newTransactionRank,
-					newTransactionBank, transaction->data, dramsim_log);
+					newTransactionBank, transaction->data, transaction->coreId, dramsim_log);
 
 
 

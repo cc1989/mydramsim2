@@ -59,11 +59,13 @@ public:
 	void *data;
 	uint64_t timeAdded;
 	uint64_t timeReturned;
+	uint8_t coreId;
 
 
 	friend ostream &operator<<(ostream &os, const Transaction &t);
 	//functions
 	Transaction(TransactionType transType, uint64_t addr, void *data);
+	Transaction(TransactionType transType, uint64_t addr, void *data, uint8_t coreId);
 	Transaction(const Transaction &t);
 
 	BusPacketType getBusPacketType()

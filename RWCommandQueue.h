@@ -58,6 +58,9 @@ class RWCommandQueue : public SimulatorObject
 public:
 	//typedefs
 	typedef vector<BusPacket *> BusPacket1D;
+	typedef vector<BusPacket1D> BusPacket2D;
+	typedef vector<BusPacket2D> BusPacket3D;
+	typedef vector<BusPacket3D> BusPacket4D;
 
 	//functions
 	RWCommandQueue(vector< vector<BankState> > &states, ostream &dramsim_log);
@@ -72,6 +75,7 @@ public:
 	void needRefresh(unsigned rank);
 	void print();
 	void update(); //SimulatorObject requirement
+	bool scheduleParbs(BusPacket **busPacket);
 
 	
 	BusPacket1D readQueues; // 1D array of BusPacket pointers
@@ -91,6 +95,12 @@ private:
 	bool curIsWrite;
 	unsigned nextRankPRE;
 	unsigned nextBankPRE;
+	BusPacket4D reqsMarkedInBankPerThread;
+	vector< unsigned > reqsMarkedPerThread;
+	vector< unsigned > threadPriority;
+	vector< unsigned > maxRulPerthread;
+	vector< vector<bool> > bankAccessFlag;
+	unsigned totalMarkedRequests;
 };
 }
 
