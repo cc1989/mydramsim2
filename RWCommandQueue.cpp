@@ -592,8 +592,13 @@ bool RWCommandQueue::pop(BusPacket **busPacket)
 		 Then it looks for data packets
 		 Otherwise, it starts looking for rows to close (in open page)
 	*/
-	if (totalReadRequests == 0 || writeQueues.size() >= WRITE_HIGHT_THEROLD || 
-			(preIsWrite && writeQueues.size() >= WRITE_LOW_THEROLD))
+	//总原则：转换到写后，尽量让写队列为空
+	//1.读请求为0，并且写队列长度超过WRITE_LOW_THEROLD, 由读转换到写
+	//2.写队列长度达到WRITE_HIGHT_THEROLD，读队列个数是偶数个，由读转换到写
+	//3.上一个请求是写，并且写队列不为空，继续写
+	if ((totalReadRequests == 0 && writeQueues.size() >  WRITE_LOW_THEROLD) || 
+			(totalReadRequests % 2 == 0 && writeQueues.size() >= WRITE_HIGHT_THEROLD) || 
+			(preIsWrite && writeQueues.size() > 0))
 		preIsWrite = curIsWrite = true;
 	else
 		preIsWrite = curIsWrite = false;
