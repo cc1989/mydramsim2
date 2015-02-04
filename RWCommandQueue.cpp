@@ -148,6 +148,8 @@ void RWCommandQueue::enqueue(bool isWrite, BusPacket *newBusPacket)
 //par-bs scheduling
 bool RWCommandQueue::scheduleParbs(BusPacket **busPacket)
 {
+	if (totalReadRequests == 0)  //队列中没有读请求
+		return false;
 	if (totalMarkedRequests == 0)
 	{
 		//新的batch开始	
