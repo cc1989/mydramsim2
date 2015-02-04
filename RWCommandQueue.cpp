@@ -196,7 +196,7 @@ bool RWCommandQueue::scheduleParbs(BusPacket **busPacket)
 				if (j != p && maxRulePerthread[j] == min && reqsMarkedPerThread[j] < reqsMarkedPerThread[p])
 					p = j;
 			threadPriority.push_back(p);
-			maxRulePerthread[p] = MARKING_CAP + 1;
+			maxRulePerthread[p] = MARKING_CAP + 2;
 		}
 		//设置每个请求中的优先级
 		for (size_t i = 0; i < NUM_THREAD; i++)
