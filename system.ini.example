@@ -20,7 +20,7 @@ NUM_THREAD=3      ;
 
 ;for true/false, please use all lowercase
 DEBUG_TRANS_Q=false
-DEBUG_CMD_Q=true
+DEBUG_CMD_Q=false
 DEBUG_ADDR_MAP=false
 DEBUG_BUS=false
 DEBUG_BANKSTATE=false
