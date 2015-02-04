@@ -33,10 +33,10 @@
 
 
 
-#ifndef RW_CMDQUEUE_H
-#define RW_CMDQUEUE_H
+#ifndef RWCMDQUEUE_H
+#define RWCMDQUEUE_H
 
-//RWCommandQueue.h
+//CommandQueue.h
 //
 //Header
 //
@@ -60,6 +60,7 @@ public:
 	typedef vector<BusPacket *> BusPacket1D;
 	typedef vector<BusPacket1D> BusPacket2D;
 	typedef vector<BusPacket2D> BusPacket3D;
+	typedef vector<BusPacket3D> BusPacket4D;
 
 	//functions
 	RWCommandQueue(vector< vector<BankState> > &states, ostream &dramsim_log);
@@ -67,29 +68,22 @@ public:
 
 	void enqueue(bool isWrite, BusPacket *newBusPacket);
 	bool pop(BusPacket **busPacket);
-	bool scheduleParbs(BusPacket **busPacket);
 	bool hasRoomFor(bool isWrite, unsigned numberToEnqueue, unsigned rank, unsigned bank);
+	vector<BusPacket *> &getCommandQueue();
 	bool isIssuable(BusPacket *busPacket);
 	bool isEmpty(unsigned rank);
 	void needRefresh(unsigned rank);
 	void print();
 	void update(); //SimulatorObject requirement
-	vector<BusPacket *> &getCommandQueue(bool isWrite, unsigned rank, unsigned bank);
+	bool scheduleParbs(BusPacket **busPacket);
 
-	//fields
 	
-	BusPacket3D queues; // 3D array of BusPacket pointers
-	BusPacket1D writeQueues; // 1D array of write BusPacket pointers
+	BusPacket1D readQueues; // 1D array of BusPacket pointers
+	BusPacket1D writeQueues; // 1D array of BusPacket pointers
 	vector< vector<BankState> > &bankStates;
 private:
 	void nextRankAndBank(unsigned &rank, unsigned &bank);
 	//fields
-	unsigned nextBank;
-	unsigned nextRank;
-
-	unsigned nextBankPRE;
-	unsigned nextRankPRE;
-
 	unsigned refreshRank;
 	bool refreshWaiting;
 
@@ -99,13 +93,14 @@ private:
 	bool sendAct;
 	bool preIsWrite;
 	bool curIsWrite;
-	unsigned totalReadRequests;
-
-	//par-bs
-	vector< unsigned > reqsMarkedPerThread;  //每个线程标记的请求数
-	vector< unsigned > threadPriority;  //存放线程优先级
-	vector< unsigned > maxRulePerthread;
-	unsigned totalMarkedRequests;  //总的被标记请求数
+	unsigned nextRankPRE;
+	unsigned nextBankPRE;
+	BusPacket4D reqsMarkedInBankPerThread;
+	vector< unsigned > reqsMarkedPerThread;
+	vector< unsigned > threadPriority;
+	vector< unsigned > maxRulPerthread;
+	vector< vector<bool> > bankAccessFlag;
+	unsigned totalMarkedRequests;
 };
 }
 

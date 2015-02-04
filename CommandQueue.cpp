@@ -40,7 +40,7 @@
 //Class file for command queue object
 //
 
-#include "CommandQueue.h"
+#include "RWCommandQueue.h"
 #include "MemoryController.h"
 #include <assert.h>
 

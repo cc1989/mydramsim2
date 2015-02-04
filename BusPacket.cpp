@@ -124,7 +124,7 @@ void BusPacket::print()
 	}
 	else
 	{
-		PRINT("threadId [" << threadId << "]");
+		PRINT("threadId [" << threadId << "] marked [" << marked << "]");
 		switch (busPacketType)
 		{
 		case READ:
