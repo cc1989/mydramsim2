@@ -68,6 +68,7 @@ public:
 	void enqueue(bool isWrite, BusPacket *newBusPacket);
 	bool pop(BusPacket **busPacket);
 	bool scheduleParbs(BusPacket **busPacket);
+	bool schedulePBFMS(BusPacket **busPacket);
 	bool hasRoomFor(bool isWrite, unsigned numberToEnqueue, unsigned rank, unsigned bank);
 	bool isIssuable(BusPacket *busPacket);
 	bool isEmpty(unsigned rank);

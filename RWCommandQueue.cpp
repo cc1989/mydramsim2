@@ -144,6 +144,11 @@ void RWCommandQueue::enqueue(bool isWrite, BusPacket *newBusPacket)
 	}
 }
 
+//
+bool RWCommandQueue::schedulePBFMS(BusPacket **busPacket)
+{
+
+}
 
 //par-bs scheduling
 bool RWCommandQueue::scheduleParbs(BusPacket **busPacket)
@@ -594,6 +599,9 @@ bool RWCommandQueue::pop(BusPacket **busPacket)
 		 Then it looks for data packets
 		 Otherwise, it starts looking for rows to close (in open page)
 	*/
+	//判断调度算法
+	if (schedulingPolicy == PBFMS)	
+		return schedulePBFMS(busPacket);
 	//总原则：转换到写后，尽量让写队列为空
 	//1.读请求为0，并且写队列长度超过WRITE_LOW_THEROLD, 由读转换到写
 	//2.写队列长度达到WRITE_HIGHT_THEROLD，读队列个数是偶数个，由读转换到写

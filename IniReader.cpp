@@ -115,6 +115,7 @@ uint64_t EPOCH_LENGTH;
 unsigned TOTAL_ROW_ACCESSES;
 
 uint64_t QUANTUM;
+float MPKIA;
 
 // strings and their associated enums
 string ROW_BUFFER_POLICY;
@@ -200,6 +201,7 @@ static ConfigMap configMap[] =
 	DEFINE_UINT_PARAM(WRITE_HIGHT_THEROLD,SYS_PARAM),
 	DEFINE_UINT_PARAM(MARKING_CAP,SYS_PARAM),
 	DEFINE_UINT_PARAM(NUM_THREAD,SYS_PARAM),
+	DEFINE_FLOAT_PARAM(MPKIA,SYS_PARAM),
 
 	DEFINE_UINT64_PARAM(EPOCH_LENGTH,SYS_PARAM),
 	DEFINE_UINT64_PARAM(QUANTUM,SYS_PARAM),
@@ -668,6 +670,14 @@ void IniReader::InitEnumsFromStrings()
 	else if (SCHEDULING_POLICY == "par-bs")
 	{
 		schedulingPolicy = PARBS;
+		if (DEBUG_INI_READER) 
+		{
+			DEBUG("SCHEDULING: PARBS");
+		}
+	}
+	else if (SCHEDULING_POLICY == "pbfms")
+	{
+		schedulingPolicy = PBFMS;
 		if (DEBUG_INI_READER) 
 		{
 			DEBUG("SCHEDULING: PARBS");

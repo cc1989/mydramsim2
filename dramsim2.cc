@@ -158,8 +158,17 @@ Tick
 DRAMSim2::recvAtomic(PacketPtr pkt)
 {
     access(pkt);
-
-    // 50 ns is just an arbitrary value at this point
+	printCount++;
+	if (printCount % 10000 == 0)
+	{
+		for (int i = 0; i < 8; i++)	
+			std::cout << "CPU" << i << " insCount:" << _system->cpuNumInsts[i] << std::endl;
+	}
+	//判断是否有负载运行了10亿条指令，如果是，则打印负载完成的时间
+	for (int i = 0; i < 8; i++)	
+		if (_system->cpuNumInsts[i] >= 1000000000)
+			std::cout <<  "workload" << i << "end. tick = " << curTick() << ", insCount = " << _system->cpuNumInsts[i] << std::endl;
+// 50 ns is just an arbitrary value at this point
     return pkt->memInhibitAsserted() ? 0 : 50000;
 }
 
@@ -180,9 +189,6 @@ DRAMSim2::recvFunctional(PacketPtr pkt)
 bool
 DRAMSim2::recvTimingReq(PacketPtr pkt)
 {
-	printCount++;
-	if (printCount % 10000 == 0)
-		std::cout << "total ins :" << _system->totalNumInsts << std::endl;
     // we should never see a new request while in retry
     assert(!retryReq);
 
@@ -240,6 +246,16 @@ DRAMSim2::recvTimingReq(PacketPtr pkt)
         // cannot determine without parsing the ini file ourselves)
 		//_system->
 		//std::cout << "outstandingWrites:" << outstandingWrites.size()<< " type" << pkt->isWrite() << " addr:" << std::hex << pkt->getAddr() << " masterId:" << pkt->req->masterId() << std::endl;
+		printCount++;
+		if (printCount % 10000 == 0)
+		{
+			for (int i = 0; i < 8; i++)	
+				std::cout << "CPU" << i << " insCount:" << _system->cpuNumInsts[i] << std::endl;
+		}
+		//判断是否有负载运行了10亿条指令，如果是，则打印负载完成的时间
+		for (int i = 0; i < 8; i++)	
+			if (_system->cpuNumInsts[i] >= 1000000000)
+				std::cout <<  "workload" << i << "end. tick = " << curTick() << ", insCount = " << _system->cpuNumInsts[i] << std::endl;
 		if (pkt->isWrite())
 			wrapper.enqueue(pkt->isWrite(), pkt->getAddr());
 		else
