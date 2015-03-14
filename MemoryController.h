@@ -69,6 +69,7 @@ public:
 	void update();
 	void printStats(bool finalStats = false);
 	void resetStats(); 
+	void statisticsMPKI();
 
 
 	//fields
@@ -131,6 +132,13 @@ public:
 	vector< uint64_t > actpreEnergy;
 	vector< uint64_t > refreshEnergy;
 
+	//MPKI统计
+	vector< uint64_t > accessCount;
+	vector< double > MPKI;
+	uint64_t allAccessCount;
+	vector<size_t> lsThread;
+	size_t lsNum;
+	//bool hasLSRequest;
 };
 }
 

@@ -139,6 +139,7 @@ extern unsigned WRITE_HIGHT_THEROLD;
 extern unsigned MARKING_CAP;
 extern unsigned NUM_THREAD;
 extern float MPKIA;
+extern uint64_t QUANTUM;
 
 extern uint64_t EPOCH_LENGTH;
 

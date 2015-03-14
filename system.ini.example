@@ -4,18 +4,19 @@ NUM_CHANS=1								; number of *logically independent* channels (i.e. each with 
 JEDEC_DATA_BUS_BITS=64 		 		; Always 64 for DDRx; if you want multiple *ganged* channels, set this to N*64
 TRANS_QUEUE_DEPTH=32					; transaction queue, i.e., CPU-level commands such as:  READ 0xbeef
 CMD_QUEUE_DEPTH=32                     ; command queue, i.e., DRAM-level commands such as: CAS 544, RAS 4
-EPOCH_LENGTH=100000						; length of an epoch in cycles (granularity of simulation)
+EPOCH_LENGTH=100000000000						; length of an epoch in cycles (granularity of simulation)
 ROW_BUFFER_POLICY=open_page 		; close_page or open_page
 ADDRESS_MAPPING_SCHEME=scheme8	;valid schemes 1-7; For multiple independent channels, use scheme7 since it has the most parallelism 
-SCHEDULING_POLICY=pbfms; bank_then_rank_round_robin or rank_then_bank_round_robin 
+SCHEDULING_POLICY=pbfms   ;  fr-fcfs ; par-bs; pbfms; bank_then_rank_round_robin or rank_then_bank_round_robin 
 QUEUING_STRUCTURE=per_rank			;per_rank or per_rank_per_bank
-QUANTUM=1000000     ;MPKI统计时间段
-READ_CMD_QUEUE_DEPTH=64    ;读队列长度
+QUANTUM=100000     ;MPKI统计时间段
+READ_CMD_QUEUE_DEPTH=16    ;读队列长度
 WRITE_CMD_QUEUE_DEPTH=64    ;队列长度
-WRITE_LOW_THEROLD=10    ;读队列为空时，开始切换到写队列的low therold
+WRITE_LOW_THEROLD=20    ;读队列为空时，开始切换到写队列的low therold
 WRITE_HIGHT_THEROLD=60    ;写队列low therold
 MARKING_CAP=8     ;
-NUM_THREAD=3      ;
+NUM_THREAD=2      ;
+MPKIA=0.125;
 
 
 ;for true/false, please use all lowercase
@@ -30,5 +31,5 @@ VIS_FILE_OUTPUT=true
 
 USE_LOW_POWER=true 					; go into low power mode when idle?
 VERIFICATION_OUTPUT=false 			; should be false for normal operation
-TOTAL_ROW_ACCESSES=4	; 				maximum number of open page requests to send to the same row before forcing a row close (to prevent starvation)
+TOTAL_ROW_ACCESSES=10000	; 				maximum number of open page requests to send to the same row before forcing a row close (to prevent starvation)
 

@@ -63,7 +63,7 @@ using namespace DRAMSim;
 MemoryController::MemoryController(MemorySystem *parent, CSVWriter &csvOut_, ostream &dramsim_log_) :
 		dramsim_log(dramsim_log_),
 		bankStates(NUM_RANKS, vector<BankState>(NUM_BANKS, dramsim_log)),
-		commandQueue(bankStates, dramsim_log_),
+		commandQueue(this, bankStates, dramsim_log_),
 		poppedBusPacket(NULL),
 		csvOut(csvOut_),
 		totalTransactions(0),
@@ -108,6 +108,13 @@ MemoryController::MemoryController(MemorySystem *parent, CSVWriter &csvOut_, ost
 	{
 		refreshCountdown.push_back((int)((REFRESH_PERIOD/tCK)/NUM_RANKS)*(i+1));
 	}
+
+	//初始化MPKI统计信息
+	accessCount = vector<uint64_t>(NUM_THREAD, 0);
+	MPKI = vector<double>(NUM_THREAD, 0.0);
+	allAccessCount = 0;
+	lsThread.clear();
+	lsNum = 0;
 }
 
 //get a bus packet from either data or cmd bus
@@ -153,7 +160,9 @@ void MemoryController::attachRanks(vector<Rank *> *ranks)
 void MemoryController::update()
 {
 
-	PRINT(" ------------------------- [" << currentClockCycle << "] -------------------------");
+	if (schedulingPolicy == PBFMS)
+		statisticsMPKI();
+	//PRINT(" ------------------------- [" << currentClockCycle << "] -------------------------");
 
 	//update bank states
 	for (size_t i=0;i<NUM_RANKS;i++)
@@ -766,11 +775,76 @@ bool MemoryController::WillAcceptTransaction()
 	return transactionQueue.size() < TRANS_QUEUE_DEPTH;
 }
 
+void MemoryController::statisticsMPKI()
+{
+
+	//在QUANTUM开始的时候计算MPKI，选取延迟敏感型线程
+	if (currentClockCycle && currentClockCycle % QUANTUM == 0)
+	{
+
+		std::cout << "clock:" << currentClockCycle << std::endl << "访存行为:" << std::endl;
+		for (size_t i = 0; i < NUM_THREAD; i++)		
+		{
+			if (allAccessCount != 0)
+				MPKI[i] = ((double)accessCount[i]) / allAccessCount;
+			else 
+				MPKI[i] = 0.0;
+			std::cout << "CPU" << i << ":" << accessCount[i] << " " << MPKI[i] << std::endl;
+			accessCount[i] = 0;
+		}
+		allAccessCount = 0;
+		//对MPKI排序
+		lsThread.clear();
+		for (size_t i = 0; i < NUM_THREAD; i++)
+		{
+			double cur = 1.1;
+			size_t p;
+			for (size_t j = 0; j < NUM_THREAD; j++)
+			{
+				size_t k = 0;
+				for (; k < lsThread.size(); k++)
+					if (lsThread[k] == j)
+						break;
+				if (k < lsThread.size())
+					continue;
+				if (MPKI[j] < cur)	
+				{
+					cur = MPKI[j];
+					p = j;
+				}
+				lsThread.push_back(p);
+			}
+		}
+		//选取延迟敏感性线程
+		double curMPKI= 0.0;
+		lsNum = 0;
+		PRINT("延迟敏感型线程：");
+		for (size_t i = 0; i < lsThread.size(); i++)
+			if (curMPKI + MPKI[lsThread[i]] < MPKIA) 
+			{
+				curMPKI += MPKI[lsThread[i]];
+				std::cout << "CPU" << lsThread[i] << " MPKI=" << MPKI[lsThread[i]] << std::endl;
+				lsNum = i + 1;
+			}
+			else
+				break;
+	}
+	//判断当前请求是否是延迟敏感型线程的请sLSRequesthasLSRequest请求
+}
 //allows outside source to make request of memory system
 bool MemoryController::addTransaction(Transaction *trans)
 {
 	if (WillAcceptTransaction())
 	{
+		if (schedulingPolicy == PBFMS)
+		{
+			//统计线程的访存MPKI
+			if (trans->transactionType == DATA_READ)
+			{
+				accessCount[trans->coreId]++;
+				allAccessCount++;
+			}
+		}
 		trans->timeAdded = currentClockCycle;
 		transactionQueue.push_back(trans);
 		return true;

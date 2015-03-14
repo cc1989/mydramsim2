@@ -51,6 +51,7 @@ using namespace std;
 
 namespace DRAMSim
 {
+class MemoryController;
 class RWCommandQueue : public SimulatorObject
 {
 	RWCommandQueue();
@@ -62,7 +63,7 @@ public:
 	typedef vector<BusPacket2D> BusPacket3D;
 
 	//functions
-	RWCommandQueue(vector< vector<BankState> > &states, ostream &dramsim_log);
+	RWCommandQueue(MemoryController* parent, vector< vector<BankState> > &states, ostream &dramsim_log);
 	virtual ~RWCommandQueue(); 
 
 	void enqueue(bool isWrite, BusPacket *newBusPacket);
@@ -107,6 +108,9 @@ private:
 	vector< unsigned > threadPriority;  //存放线程优先级
 	vector< unsigned > maxRulePerthread;
 	unsigned totalMarkedRequests;  //总的被标记请求数
+
+	MemoryController* parentMC;  //指向控制器
+	vector<BusPacket*> lsQueue;  //存放敏感请求队列
 };
 }
 

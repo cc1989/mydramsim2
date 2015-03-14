@@ -41,12 +41,12 @@
 //
 
 #include "RWCommandQueue.h"
-#include "MemoryController.h"
 #include <assert.h>
+#include "MemoryController.h"
 
 using namespace DRAMSim;
 
-RWCommandQueue::RWCommandQueue(vector< vector<BankState> > &states, ostream &dramsim_log_) :
+RWCommandQueue::RWCommandQueue(MemoryController* parent, vector< vector<BankState> > &states, ostream &dramsim_log_) :
 		dramsim_log(dramsim_log_),
 		bankStates(states),
 		nextBank(0),
@@ -60,6 +60,7 @@ RWCommandQueue::RWCommandQueue(vector< vector<BankState> > &states, ostream &dra
 		curIsWrite(false),
 		totalReadRequests(0)
 {
+	parentMC = parent;
 	//set here to avoid compile errors
 	currentClockCycle = 0;
 
@@ -131,10 +132,22 @@ void RWCommandQueue::enqueue(bool isWrite, BusPacket *newBusPacket)
 	}
 	else
 	{
+		totalReadRequests++;
+		//判断当前请求是否是延迟敏感型线程的请求,如果是，将该请求放入敏感请求队列
+		for (int i = 0; i < parentMC->lsNum; i++)
+			if (parentMC->lsThread[i] == newBusPacket->threadId)
+			{
+				PRINT("延迟敏感型线程请求")
+				lsQueue.push_back(newBusPacket);
+				newBusPacket->priority = i;
+				newBusPacket->marked = true;
+				totalMarkedRequests++;
+				reqsMarkedPerThread[newBusPacket->threadId]++;
+				return;
+			}
 		unsigned rank = newBusPacket->rank;
 		unsigned bank = newBusPacket->bank;
 		queues[rank][bank].push_back(newBusPacket);
-		totalReadRequests++;
 		if (queues[rank][bank].size()>CMD_QUEUE_DEPTH)
 		{
 			ERROR("== Error - Enqueued more than allowed in command queue");
@@ -144,14 +157,8 @@ void RWCommandQueue::enqueue(bool isWrite, BusPacket *newBusPacket)
 	}
 }
 
-//
+//PBFMS
 bool RWCommandQueue::schedulePBFMS(BusPacket **busPacket)
-{
-
-}
-
-//par-bs scheduling
-bool RWCommandQueue::scheduleParbs(BusPacket **busPacket)
 {
 	if (totalReadRequests == 0)  //队列中没有读请求
 		return false;
@@ -159,7 +166,7 @@ bool RWCommandQueue::scheduleParbs(BusPacket **busPacket)
 	{
 		//新的batch开始	
 		//标记请求,统计max rule
-		PRINT("新的batch开始");
+		//PRINT("新的batch开始");
 		for (size_t i = 0; i < NUM_THREAD; i++)
 			maxRulePerthread[i] = 0;
 		for (size_t i = 0; i < NUM_RANKS; i++)	
@@ -187,9 +194,14 @@ bool RWCommandQueue::scheduleParbs(BusPacket **busPacket)
 		for (size_t i = 0; i < NUM_THREAD; i++)
 			if (maxRulePerthread[i] == 0)
 				maxRulePerthread[i] = MARKING_CAP + 1;
-		//获取排名
+
 		threadPriority.clear();
-		for (size_t i = 0; i < NUM_THREAD; i++)
+		//延迟敏感型线程排名
+		for (int i = 0; i < parentMC->lsNum; i++)
+			threadPriority.push_back(parentMC->lsThread[i]);
+
+		//获取其它排名
+		for (size_t i = 0; i < NUM_THREAD -  parentMC->lsNum; i++)
 		{
 			unsigned min = maxRulePerthread[0];	
 			size_t p = 0;
@@ -205,25 +217,70 @@ bool RWCommandQueue::scheduleParbs(BusPacket **busPacket)
 			threadPriority.push_back(p);
 			maxRulePerthread[p] = MARKING_CAP + 2;
 		}
-		//设置每个请求中的优先级
-		for (size_t i = 0; i < NUM_THREAD; i++)
+		/*for (int i = 0; i < parentMC->lsThread.size(); i++)
 		{
-			unsigned threadId = threadPriority[i];	
-			if (reqsMarkedPerThread[threadId] == 0)
-				break;
-			for (size_t j = 0; j < NUM_RANKS; j++)
-				for (size_t k = 0; k < NUM_BANKS; k++)
+			int p;
+			for (int j = 0; j < threadPriority.size(); j++)	
+				if (parentMC->lsThread[i] == threadPriority[j])
 				{
-					vector<BusPacket*> &queue = getCommandQueue(false, j, k);	
-					for (size_t ii = 0; ii < queue.size(); ii++)
-						if (queue[i]->threadId == threadId && queue[i]->marked)
-							queue[i]->priority = i;
+					p = j;
+					break;
 				}
-		}
-		//线程优先级
-		for (size_t i = 0; i < NUM_THREAD; i++)
-			PRINT(threadPriority[i]);
+			for (int j = i; j < p; j++)
+				threadPriority[j + 1] = threadPriority[j];
+			threadPriority[i] = parentMC->lsThread[i];
+		}*/
+		//设置每个请求中的优先级,将优先级高的请求放到队列前面
+		for (size_t j = 0; j < NUM_RANKS; j++)
+			for (size_t k = 0; k < NUM_BANKS; k++)
+			{
+				vector<BusPacket*> &queue = getCommandQueue(false, j, k);	
+				unsigned hasThread = 0; //放到前面的请求个数
+				for (size_t i = parentMC->lsNum; i < NUM_THREAD; i++)
+				{
+					unsigned threadId = threadPriority[i];	
+					size_t ii = hasThread;
+					while (ii < queue.size())
+					{
+						if (queue[ii]->threadId == threadId && queue[ii]->marked)
+						{
+							BusPacket* temp = queue[ii];
+							if (ii > 0)
+							{
+								queue.erase(queue.begin() + ii);
+								queue.insert(queue.begin() + hasThread, temp);
+							}
+							hasThread++;
+						}
+						ii++;
+					}
+				}
+			}
+
 	}
+	if (lsQueue.size())  //有延迟敏感的请求
+	{
+		for (int i = 0; i < lsQueue.size(); i++)	
+		{
+			vector <BusPacket *> &queue = getCommandQueue(curIsWrite, lsQueue[i]->rank, lsQueue[i]->bank);	
+			if (queue.empty())
+				queue.push_back(lsQueue[i]);
+			else
+			{
+				for (int j = 0; j < queue.size(); j++)
+					if (!queue[j]->marked || queue[j]->priority < lsQueue[i]->priority)
+					{
+
+						queue.insert(queue.begin() + j, lsQueue[i]);
+						break;
+					}	
+			}
+		}
+		lsQueue.clear();
+	}
+	//线程优先级
+	/*for (size_t i = 0; i < NUM_THREAD; i++)
+		PRINT(threadPriority[i]);*/
 	bool sendingREForPRE = false;
 	if (refreshWaiting)
 	{
@@ -313,6 +370,8 @@ bool RWCommandQueue::scheduleParbs(BusPacket **busPacket)
 			sendingREForPRE = true;
 		}
 	}
+	//1.每个bank中的请求，如果有被标记，则标记请求行命中优先，否则行命中请求优先
+	//2.标记请求中，高优先级优先
 	//看看能否找到可发送的包
 	if (!sendingREForPRE)
 	{
@@ -334,7 +393,7 @@ bool RWCommandQueue::scheduleParbs(BusPacket **busPacket)
 			{
 				//search from the beginning to find first issuable bus packet
 				//row hit优先
-				PRINT("row hit优先");
+				//PRINT("row hit优先");
 				for (size_t i=0;i<queue.size();i++)
 				{
 					BusPacket *packet = queue[i];
@@ -387,7 +446,7 @@ bool RWCommandQueue::scheduleParbs(BusPacket **busPacket)
 							//当前发送的active是没有标记的包,将后面配对的读请求调到队列最前面
 							if (hasMarkedPacket == false && (*busPacket)->busPacketType == ACTIVATE)
 							{
-								PRINT("未标记请求的ACTIVE发送");
+								//PRINT("未标记请求的ACTIVE发送");
 								queue.erase(queue.begin()+i);
 								queue.insert(queue.begin(), next);
 							}
@@ -405,76 +464,7 @@ bool RWCommandQueue::scheduleParbs(BusPacket **busPacket)
 					}
 				}
 				if (foundIssuable) break;
-				if (hasMarkedPacket) 
-				{
-					//高优先级优先
-					PRINT("优先级优先");
-					for (size_t t = 0; t < NUM_THREAD; t++)
-					{
-						bool hasHigherPriority = false;
-						for (size_t i = 0; i < queue.size(); i++)
-						{
-							BusPacket *packet = queue[i];
-							if (packet->marked == false)  //marked优先
-								continue;
-							if (packet->priority != t)  //高优先级优先
-								continue;
-							hasHigherPriority = true;
-							if (isIssuable(packet))
-							{
-								//check for dependencies
-								bool dependencyFound = false;
-								for (size_t j=0;j<i;j++)
-								{
-									BusPacket *prevPacket = queue[j];
-									if (prevPacket->busPacketType != ACTIVATE &&
-											prevPacket->marked && prevPacket->priority == t && 
-											prevPacket->row == packet->row)
-									{
-										dependencyFound = true;
-										break;
-									}
-								}
-								if (dependencyFound) continue;
-
-								*busPacket = packet;
-
-								//if the bus packet before is an activate, that is the act that was
-								//	paired with the column access we are removing, so we have to remove
-								//	that activate as well (check i>0 because if i==0 then theres nothing before it)
-								if (i>0 && queue[i-1]->busPacketType == ACTIVATE)
-								{
-									rowAccessCounters[(*busPacket)->rank][(*busPacket)->bank]++;
-									// i is being returned, but i-1 is being thrown away, so must delete it here 
-									delete (queue[i-1]);
-
-									// remove both i-1 (the activate) and i (we've saved the pointer in *busPacket)
-									queue.erase(queue.begin()+i-1,queue.begin()+i+1);
-									reqsMarkedPerThread[(*busPacket)->threadId] -= 2;
-									totalMarkedRequests -= 2;
-									if (!curIsWrite)
-										totalReadRequests -= 2;
-								}
-								else // there's no activate before this packet
-								{
-									//or just remove the one bus packet
-									queue.erase(queue.begin()+i);
-									reqsMarkedPerThread[(*busPacket)->threadId]--;
-									totalMarkedRequests--;
-									if (!curIsWrite)
-										totalReadRequests --;
-								}
-
-								foundIssuable = true;
-								break;
-							}
-						}
-						if (hasHigherPriority)  //队列中有当前优先级的包
-							break;
-					}
-				}
-			}
-
+			}	
 			//if we found something, break out of do-while
 			if (foundIssuable) break;
 
@@ -510,12 +500,384 @@ bool RWCommandQueue::scheduleParbs(BusPacket **busPacket)
 							hasMarkedPacket = true;
 							break;
 						}
-
+					//优先关闭优先级高的请求对应的bank
+					uint16_t firstThread = 0xff;
 					for (size_t i=0;i<queue.size();i++)
 					{
 						if (hasMarkedPacket && queue[i]->marked == false)  //标记的请求优先
-							continue;
-						//if there is something going to that bank and row, then we don't want to send a PRE
+							break;
+						if (queue[i]->marked && firstThread == 0xff)
+							firstThread = queue[i]->threadId;
+						//PRINT("高优先级请求优先");
+						if (hasMarkedPacket && queue[i]->threadId != firstThread)
+							break;
+						if (queue[i]->rank == nextRankPRE && queue[i]->bank == nextBankPRE &&
+								queue[i]->row == bankStates[nextRankPRE][nextBankPRE].openRowAddress)
+						{
+							found = true;
+							break;
+						}
+					}
+
+					//if nothing found going to that bank and row or too many accesses have happend, close it
+					if (!found || rowAccessCounters[nextRankPRE][nextBankPRE]==TOTAL_ROW_ACCESSES)
+					{
+						if (currentClockCycle >= bankStates[nextRankPRE][nextBankPRE].nextPrecharge)
+						{
+							sendingPRE = true;
+							rowAccessCounters[nextRankPRE][nextBankPRE] = 0;
+							*busPacket = new BusPacket(PRECHARGE, 0, 0, 0, nextRankPRE, nextBankPRE, 0, dramsim_log);
+							break;
+						}
+					}
+				}
+				nextRankAndBank(nextRankPRE, nextBankPRE);
+			}
+			while (!(startingRank == nextRankPRE && startingBank == nextBankPRE));
+
+			//if no PREs could be sent, just return false
+			if (!sendingPRE) return false;
+		}
+	}
+
+	//sendAct is flag used for posted-cas
+	//  posted-cas is enabled when AL>0
+	//  when sendAct is true, when don't want to increment our indexes
+	//  so we send the column access that is paid with this act
+	if (AL>0 && sendAct)
+	{
+		sendAct = false;
+	}
+	else
+	{
+		sendAct = true;
+		nextRankAndBank(nextRank, nextBank);
+	}
+
+	//if its an activate, add a tfaw counter
+	if ((*busPacket)->busPacketType==ACTIVATE)
+	{
+		tFAWCountdown[(*busPacket)->rank].push_back(tFAW);
+	}
+
+	return true;
+}
+//par-bs scheduling
+bool RWCommandQueue::scheduleParbs(BusPacket **busPacket)
+{
+	if (totalReadRequests == 0)  //队列中没有读请求
+		return false;
+	if (totalMarkedRequests == 0)
+	{
+		//新的batch开始	
+		//标记请求,统计max rule
+		//PRINT("新的batch开始");
+		for (size_t i = 0; i < NUM_THREAD; i++)
+			maxRulePerthread[i] = 0;
+		for (size_t i = 0; i < NUM_RANKS; i++)	
+			for (size_t j = 0; j < NUM_BANKS; j++)
+			{
+				vector<BusPacket*> &queue = getCommandQueue(false, i, j);	
+				for (size_t k = 0; k < NUM_THREAD; k++)
+				{
+					unsigned perBankCount = 0;
+					for (size_t ii = 0; ii < queue.size(); ii++)
+						if (queue[ii]->threadId == k)
+						{
+							perBankCount++;
+							queue[ii]->marked = true;
+							if (perBankCount == MARKING_CAP)
+								break;
+						}
+					if (perBankCount > maxRulePerthread[k])
+						maxRulePerthread[k] = perBankCount;
+					reqsMarkedPerThread[k] += perBankCount;
+					totalMarkedRequests += perBankCount;
+				}
+			}
+
+		for (size_t i = 0; i < NUM_THREAD; i++)
+			if (maxRulePerthread[i] == 0)
+				maxRulePerthread[i] = MARKING_CAP + 1;
+
+		threadPriority.clear();
+		//获取其它排名
+		for (size_t i = 0; i < NUM_THREAD -  parentMC->lsNum; i++)
+		{
+			unsigned min = maxRulePerthread[0];	
+			size_t p = 0;
+			for (size_t j = 1; j < NUM_THREAD; j++)
+				if (maxRulePerthread[j] < min)
+				{
+					min = maxRulePerthread[j];	
+					p = j;
+				}
+			for (size_t j = 0; j < NUM_THREAD; j++)	
+				if (j != p && maxRulePerthread[j] == min && reqsMarkedPerThread[j] < reqsMarkedPerThread[p])
+					p = j;
+			threadPriority.push_back(p);
+			maxRulePerthread[p] = MARKING_CAP + 2;
+		}
+		//设置每个请求中的优先级,将优先级高的请求放到队列前面
+		for (size_t j = 0; j < NUM_RANKS; j++)
+			for (size_t k = 0; k < NUM_BANKS; k++)
+			{
+				vector<BusPacket*> &queue = getCommandQueue(false, j, k);	
+				unsigned hasThread = 0; //放到前面的请求个数
+				for (size_t i = 0; i < NUM_THREAD; i++)
+				{
+					unsigned threadId = threadPriority[i];	
+					size_t ii = hasThread;
+					while (ii < queue.size())
+					{
+						if (queue[ii]->threadId == threadId && queue[ii]->marked)
+						{
+							BusPacket* temp = queue[ii];
+							if (ii > 0)
+							{
+								queue.erase(queue.begin() + ii);
+								queue.insert(queue.begin() + hasThread, temp);
+							}
+							hasThread++;
+						}
+						ii++;
+					}
+				}
+			}
+
+	}
+	//线程优先级
+	/*for (size_t i = 0; i < NUM_THREAD; i++)
+		PRINT(threadPriority[i]);*/
+	bool sendingREForPRE = false;
+	if (refreshWaiting)
+	{
+		bool sendREF = true;
+		//make sure all banks idle and timing met for a REF
+		for (size_t b=0;b<NUM_BANKS;b++)
+		{
+			//if a bank is active we can't send a REF yet
+			if (bankStates[refreshRank][b].currentBankState == RowActive)
+			{
+				sendREF = false;
+				bool closeRow = true;
+				//search for commands going to an open row
+				vector <BusPacket *> &refreshQueue = getCommandQueue(curIsWrite, refreshRank,b);
+				//队列中是否有标记的包
+				bool hasMarkedPacket = false;
+				for (size_t j = 0; j < refreshQueue.size(); j++)
+					if (refreshQueue[j]->marked)
+					{
+						hasMarkedPacket = true;
+						break;
+					}
+				for (size_t j=0;j<refreshQueue.size();j++)
+				{
+					BusPacket *packet = refreshQueue[j];
+					if (hasMarkedPacket && packet->marked == false)
+						continue;
+					//if a command in the queue is going to the same row . . .
+					if (bankStates[refreshRank][b].openRowAddress == packet->row &&
+							 refreshRank == packet->rank && b == packet->bank)
+					{
+						// . . . and is not an activate . . .
+						if (packet->busPacketType != ACTIVATE)
+						{
+							closeRow = false;
+							// . . . and can be issued . . .
+							if (isIssuable(packet))
+							{
+								//send it out
+								*busPacket = packet;
+								refreshQueue.erase(refreshQueue.begin()+j);
+								if (hasMarkedPacket)
+								{
+									reqsMarkedPerThread[packet->threadId]--;
+									totalMarkedRequests--;
+								}
+								if (!curIsWrite)
+									totalReadRequests--;
+								sendingREForPRE = true;
+							}
+							break;
+						}
+						else //command is an activate，优先刷新
+						{
+							//if we've encountered another act, no other command will be of interest
+							break;
+						}
+					}
+				}
+
+				//if the bank is open and we are allowed to close it, then send a PRE
+				if (closeRow && currentClockCycle >= bankStates[refreshRank][b].nextPrecharge)
+				{
+					rowAccessCounters[refreshRank][b]=0;
+					*busPacket = new BusPacket(PRECHARGE, 0, 0, 0, refreshRank, b, 0, dramsim_log);
+					sendingREForPRE = true;
+				}
+				break;
+			}
+			//	NOTE: the next ACT and next REF can be issued at the same
+			//				point in the future, so just use nextActivate field instead of
+			//				creating a nextRefresh field
+			else if (bankStates[refreshRank][b].nextActivate > currentClockCycle) //and this bank doesn't have an open row
+			{
+				sendREF = false;
+				break;
+			}
+		}
+
+		//if there are no open banks and timing has been met, send out the refresh
+		//	reset flags and rank pointer
+		if (sendREF && bankStates[refreshRank][0].currentBankState != PowerDown)
+		{
+			*busPacket = new BusPacket(REFRESH, 0, 0, 0, refreshRank, 0, 0, dramsim_log);
+			refreshRank = -1;
+			refreshWaiting = false;
+			sendingREForPRE = true;
+		}
+	}
+	//1.每个bank中的请求，如果有被标记，则标记请求行命中优先，否则行命中请求优先
+	//2.标记请求中，高优先级优先
+	//看看能否找到可发送的包
+	if (!sendingREForPRE)
+	{
+		unsigned startingRank = nextRank;
+		unsigned startingBank = nextBank;
+		bool foundIssuable = false;
+		do // round robin over queues
+		{
+			vector<BusPacket *> &queue = getCommandQueue(curIsWrite, nextRank,nextBank);
+			bool hasMarkedPacket = false;
+			for (size_t i = 0; i < queue.size(); i++)
+				if (queue[i]->marked)
+				{
+					hasMarkedPacket = true;
+					break;
+				}
+			//make sure there is something there first
+			if (!queue.empty() && !((nextRank == refreshRank) && refreshWaiting))
+			{
+				//search from the beginning to find first issuable bus packet
+				//row hit优先
+				//PRINT("row hit优先");
+				for (size_t i=0;i<queue.size();i++)
+				{
+					BusPacket *packet = queue[i];
+					if (hasMarkedPacket && packet->marked == false) //marked优先
+						continue;
+					if (packet->rank == nextRank && packet->bank == nextBank && isIssuable(packet))
+					{
+						//check for dependencies
+						bool dependencyFound = false;
+						for (size_t j=0;j<i;j++)
+						{
+							BusPacket *prevPacket = queue[j];
+							if (hasMarkedPacket && prevPacket->marked == false) //marked优先
+								continue;
+							if (prevPacket->busPacketType != ACTIVATE &&
+									prevPacket->row == packet->row)
+							{
+								dependencyFound = true;
+								break;
+							}
+						}
+						if (dependencyFound) continue;
+
+						*busPacket = packet;
+
+						//if the bus packet before is an activate, that is the act that was
+						//	paired with the column access we are removing, so we have to remove
+						//	that activate as well (check i>0 because if i==0 then theres nothing before it)
+						if (i>0 && queue[i-1]->busPacketType == ACTIVATE)
+						{
+							rowAccessCounters[(*busPacket)->rank][(*busPacket)->bank]++;
+							// i is being returned, but i-1 is being thrown away, so must delete it here 
+							delete (queue[i-1]);
+
+							// remove both i-1 (the activate) and i (we've saved the pointer in *busPacket)
+							queue.erase(queue.begin()+i-1,queue.begin()+i+1);
+							if (hasMarkedPacket)
+							{
+								reqsMarkedPerThread[(*busPacket)->threadId] -= 2;
+								totalMarkedRequests -= 2;
+							}
+							if (!curIsWrite)
+								totalReadRequests -= 2;
+						}
+						else // there's no activate before this packet
+						{
+							//or just remove the one bus packet
+							BusPacket *next = queue[i + 1];
+							queue.erase(queue.begin()+i);
+							//当前发送的active是没有标记的包,将后面配对的读请求调到队列最前面
+							if (hasMarkedPacket == false && (*busPacket)->busPacketType == ACTIVATE)
+							{
+								//PRINT("未标记请求的ACTIVE发送");
+								queue.erase(queue.begin()+i);
+								queue.insert(queue.begin(), next);
+							}
+							if (hasMarkedPacket)
+							{
+								reqsMarkedPerThread[(*busPacket)->threadId]--;
+								totalMarkedRequests--;
+							}
+							if (!curIsWrite)
+								totalReadRequests--;
+						}
+
+						foundIssuable = true;
+						break;
+					}
+				}
+			}	
+			//if we found something, break out of do-while
+			if (foundIssuable) break;
+
+			nextRankAndBank(nextRank, nextBank); 
+			if (startingRank == nextRank && startingBank == nextBank)
+			{
+				break;
+			}
+		}
+		while (true);
+
+		//看看能否关闭某行
+		//if nothing was issuable, see if we can issue a PRE to an open bank
+		//	that has no other commands waiting
+		if (!foundIssuable)
+		{
+			//search for banks to close
+			bool sendingPRE = false;
+			unsigned startingRank = nextRankPRE;
+			unsigned startingBank = nextBankPRE;
+
+			do // round robin over all ranks and banks
+			{
+				vector <BusPacket *> &queue = getCommandQueue(curIsWrite, nextRankPRE, nextBankPRE);
+				bool found = false;
+				//check if bank is open
+				if (bankStates[nextRankPRE][nextBankPRE].currentBankState == RowActive)
+				{
+					bool hasMarkedPacket = false;
+					for (size_t i = 0; i < queue.size(); i++)
+						if (queue[i]->marked)
+						{
+							hasMarkedPacket = true;
+							break;
+						}
+					//优先关闭优先级高的请求对应的bank
+					unsigned firstThread = 0xff;
+					for (size_t i=0;i<queue.size();i++)
+					{
+						if (hasMarkedPacket && queue[i]->marked == false)  //标记的请求优先
+							break;
+						if (queue[i]->marked && firstThread == 0xff)
+							firstThread = queue[i]->threadId;
+						//PRINT("高优先级请求优先");
+						if (hasMarkedPacket  && queue[i]->threadId != firstThread)
+							break;
 						if (queue[i]->rank == nextRankPRE && queue[i]->bank == nextBankPRE &&
 								queue[i]->row == bankStates[nextRankPRE][nextBankPRE].openRowAddress)
 						{
@@ -600,8 +962,8 @@ bool RWCommandQueue::pop(BusPacket **busPacket)
 		 Otherwise, it starts looking for rows to close (in open page)
 	*/
 	//判断调度算法
-	if (schedulingPolicy == PBFMS)	
-		return schedulePBFMS(busPacket);
+	/*if (schedulingPolicy == PBFMS)	
+		return schedulePBFMS(busPacket);*/
 	//总原则：转换到写后，尽量让写队列为空
 	//1.读请求为0，并且写队列长度超过WRITE_LOW_THEROLD, 由读转换到写
 	//2.写队列长度达到WRITE_HIGHT_THEROLD，读队列个数是偶数个，由读转换到写
@@ -612,8 +974,15 @@ bool RWCommandQueue::pop(BusPacket **busPacket)
 		preIsWrite = curIsWrite = true;
 	else
 		preIsWrite = curIsWrite = false;
+	
+	if (schedulingPolicy == PBFMS && lsQueue.size() && curIsWrite && writeQueues.size() <= WRITE_LOW_THEROLD && writeQueues.size() % 2 == 0)
+	{
+		preIsWrite = curIsWrite = false;
+	}
 	if (!curIsWrite && schedulingPolicy == PARBS)
 		return scheduleParbs(busPacket);
+	else if (!curIsWrite && schedulingPolicy == PBFMS)
+		return schedulePBFMS(busPacket);
 	if (rowBufferPolicy==ClosePage)
 	{
 	}
