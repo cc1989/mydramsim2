@@ -812,8 +812,8 @@ void MemoryController::statisticsMPKI()
 					cur = MPKI[j];
 					p = j;
 				}
-				lsThread.push_back(p);
 			}
+			lsThread.push_back(p);
 		}
 		//选取延迟敏感性线程
 		double curMPKI= 0.0;
