@@ -260,12 +260,17 @@ bool RWCommandQueue::schedulePBFMS(BusPacket **busPacket)
 	}
 	if (lsQueue.size())  //有延迟敏感的请求
 	{
-		for (size_t i = 0; i < lsQueue.size(); i++)	
+		std::cout << "敏感请求" << std::endl;
+		int i = 0;
+		while(i < lsQueue.size())
 		{
 			vector <BusPacket *> &queue = getCommandQueue(false, lsQueue[i]->rank, lsQueue[i]->bank);	
 			lsQueue[i]->print();
 			if (queue.empty())
+			{
 				queue.push_back(lsQueue[i]);
+				lsQueue.erase(lsQueue.begin() + i);
+			}
 			else
 			{
 				size_t j = 0;
@@ -273,15 +278,23 @@ bool RWCommandQueue::schedulePBFMS(BusPacket **busPacket)
 				for (; j < queue.size(); j++)
 					if (!queue[j]->marked || queue[j]->priority < lsQueue[i]->priority)
 					{
-						queue.insert(queue.begin() + j, lsQueue[i]);
 						flag = true;
+						if (!queue[j]->marked && queue[j]->busPacketType != ACTIVATE)  //防止没标记的请求的ACTIVATE已经发出了
+							i++;
+						else
+						{
+							queue.insert(queue.begin() + j, lsQueue[i]);
+							lsQueue.erase(lsQueue.begin() + i);
+						}
 						break;
 					}	
 				if (!flag)
+				{
 					queue.push_back(lsQueue[i]);
+					lsQueue.erase(lsQueue.begin() + i);
+				}
 			}
 		}
-		lsQueue.clear();
 		this->print();
 	}
 	//线程优先级
@@ -439,6 +452,13 @@ bool RWCommandQueue::schedulePBFMS(BusPacket **busPacket)
 			if (hasTosendRead)
 				break;
 		}
+		//可以转换为写了	
+		if (!hasTosendRead)
+		{
+			needToChange = false;
+			curIsWrite = true;
+			return false;
+		}
 	}
 	//1.每个bank中的请求，如果有被标记，则标记请求行命中优先，否则行命中请求优先
 	//2.标记请求中，高优先级优先
@@ -545,12 +565,7 @@ bool RWCommandQueue::schedulePBFMS(BusPacket **busPacket)
 		while (true);
 	}
 
-	//可以转换为写了	
-	if (needToChange && !hasTosendRead)
-	{
-		needToChange = false;
-		curIsWrite = true;
-	}
+	
 
 	//看看能否关闭某行
 	//if nothing was issuable, see if we can issue a PRE to an open bank
@@ -1113,16 +1128,40 @@ bool RWCommandQueue::pop(BusPacket **busPacket)
 	//1.读请求为0，并且写队列长度超过WRITE_LOW_THEROLD, 由读转换到写
 	//2.写队列长度达到WRITE_HIGHT_THEROLD，读队列个数是偶数个，由读转换到写
 	//3.上一个请求是写，并且写队列不为空，继续写
-	if ((totalReadRequests == 0 && writeQueues.size() >  WRITE_LOW_THEROLD) || (curIsWrite && writeQueues.size() > 0)) 
-		curIsWrite = true;
-	else if (!curIsWrite && writeQueues.size() >= WRITE_HIGHT_THEROLD) 
-		needToChange = true;	
-	else
-		curIsWrite = false;
-	
-	if (schedulingPolicy == PBFMS && lsQueue.size() && curIsWrite && writeQueues.size() <= WRITE_LOW_THEROLD)
-		needToChange = true;
+	if (!needToChange)
+	{
+		/*
+		if ((totalReadRequests == 0 && writeQueues.size() >  WRITE_LOW_THEROLD) || (curIsWrite && writeQueues.size() > 0)) 
+			curIsWrite = true;
+		else if (!curIsWrite && writeQueues.size() >= WRITE_HIGHT_THEROLD && !(schedulingPolicy == PBFMS && lsQueue.size())) 
+			needToChange = true;	
+		else
+			curIsWrite = false;
+		
+		if (schedulingPolicy == PBFMS && lsQueue.size() && curIsWrite && writeQueues.size() <= WRITE_LOW_THEROLD)
+			needToChange = true;*/
 
+		if (curIsWrite)
+		{
+			//前一条指令是写	
+			if ((writeQueues.size() == 0 && totalReadRequests > 0) || 
+					(schedulingPolicy == PBFMS && lsQueue.size() && writeQueues.size() <= WRITE_LOW_THEROLD))
+			{
+				needToChange = true;
+				//print();
+			}
+		}
+		else
+		{
+			//前一条指令是读	
+			if ((totalReadRequests == 0 && writeQueues.size() >  WRITE_LOW_THEROLD) || 
+					(writeQueues.size() > WRITE_HIGHT_THEROLD && !(schedulingPolicy == PBFMS && lsQueue.size())))
+			{
+				needToChange = true;
+				//print();
+			}
+		}
+	}
 	//std::cout << "curIsWrite : " << curIsWrite << std::endl;
 	if (!curIsWrite && schedulingPolicy == PARBS)
 		return scheduleParbs(busPacket);
@@ -1166,6 +1205,8 @@ bool RWCommandQueue::pop(BusPacket **busPacket)
 									*busPacket = packet;
 									refreshQueue.erase(refreshQueue.begin()+j);
 									sendingREForPRE = true;
+									if (!curIsWrite)
+										totalReadRequests --;
 								}
 								break;
 							}
@@ -1236,6 +1277,8 @@ bool RWCommandQueue::pop(BusPacket **busPacket)
 										*busPacket = packet;
 										queue.erase(queue.begin()+j);
 										foundIssuable = true;
+										if (!curIsWrite)
+											totalReadRequests --;
 									}
 									break;
 								}
@@ -1252,6 +1295,12 @@ bool RWCommandQueue::pop(BusPacket **busPacket)
 				}
 				if (hasToSendReadOrWrite)
 					break;
+			}
+			if (!hasToSendReadOrWrite)
+			{
+				needToChange = false;
+				curIsWrite = !curIsWrite;
+				return false;
 			}
 		}
 		//看看能否找到可发送的包
@@ -1373,18 +1422,10 @@ bool RWCommandQueue::pop(BusPacket **busPacket)
 				nextRankAndBank(nextRankPRE, nextBankPRE);
 			}
 			while (!(startingRank == nextRankPRE && startingBank == nextBankPRE));
-			if (needToChange && !hasToSendReadOrWrite)
-			{
-				curIsWrite = !curIsWrite;
-				needToChange = false;
-			}
+
+			
 			//if no PREs could be sent, just return false
 			if (!sendingPRE) return false;
-		}
-		if (needToChange && !hasToSendReadOrWrite)
-		{
-			curIsWrite = !curIsWrite;
-			needToChange = false;
 		}
 	}
 
@@ -1423,6 +1464,7 @@ bool RWCommandQueue::hasRoomFor(bool isWrite, unsigned numberToEnqueue, unsigned
 //prints the contents of the command queue
 void RWCommandQueue::print()
 {
+	std::cout << "curIsWrite:" << curIsWrite << " needToChange:" << needToChange  << std::endl;
 	PRINT("\n== Printing Per Rank, Per Bank Queue" );
 	PRINT(endl << "== Printing Read Queue" );
 	for (size_t i=0;i<NUM_RANKS;i++)

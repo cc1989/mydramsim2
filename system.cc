@@ -101,7 +101,10 @@ System::System(Params *p)
     // add self to global system list
     systemList.push_back(this);
 	for (int i = 0; i < 100; i++)
+	{
 		cpuNumInsts[i] = 0;
+		isEnd[i] = false;
+	}
 
     if (FullSystem) {
         kernelSymtab = new SymbolTable;

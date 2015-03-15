@@ -781,7 +781,39 @@ void MemoryController::statisticsMPKI()
 	//在QUANTUM开始的时候计算MPKI，选取延迟敏感型线程
 	if (currentClockCycle && currentClockCycle % QUANTUM == 0)
 	{
+		if (allAccessCount == 0)
+		{
+			commandQueue.print();	
+		PRINT("== Printing bank states (According to MC)");
+		for (size_t i=0;i<NUM_RANKS;i++)
+		{
+			for (size_t j=0;j<NUM_BANKS;j++)
+			{
+				if (bankStates[i][j].currentBankState == RowActive)
+				{
+					PRINTN("[" << bankStates[i][j].openRowAddress << "] ");
+				}
+				else if (bankStates[i][j].currentBankState == Idle)
+				{
+					PRINTN("[idle] ");
+				}
+				else if (bankStates[i][j].currentBankState == Precharging)
+				{
+					PRINTN("[pre] ");
+				}
+				else if (bankStates[i][j].currentBankState == Refreshing)
+				{
+					PRINTN("[ref] ");
+				}
+				else if (bankStates[i][j].currentBankState == PowerDown)
+				{
+					PRINTN("[lowp] ");
+				}
+			}
+			PRINT(""); // effectively just cout<<endl;
+		}
 
+		}
 		std::cout << "clock:" << currentClockCycle << std::endl << "访存行为:" << std::endl;
 		for (size_t i = 0; i < NUM_THREAD; i++)		
 		{
