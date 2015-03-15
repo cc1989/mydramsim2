@@ -56,8 +56,8 @@ RWCommandQueue::RWCommandQueue(MemoryController* parent, vector< vector<BankStat
 		refreshRank(0),
 		refreshWaiting(false),
 		sendAct(true),
-		preIsWrite(false),
 		curIsWrite(false),
+		needToChange(false),
 		totalReadRequests(0)
 {
 	parentMC = parent;
@@ -260,23 +260,29 @@ bool RWCommandQueue::schedulePBFMS(BusPacket **busPacket)
 	}
 	if (lsQueue.size())  //有延迟敏感的请求
 	{
-		for (int i = 0; i < lsQueue.size(); i++)	
+		for (size_t i = 0; i < lsQueue.size(); i++)	
 		{
-			vector <BusPacket *> &queue = getCommandQueue(curIsWrite, lsQueue[i]->rank, lsQueue[i]->bank);	
+			vector <BusPacket *> &queue = getCommandQueue(false, lsQueue[i]->rank, lsQueue[i]->bank);	
+			lsQueue[i]->print();
 			if (queue.empty())
 				queue.push_back(lsQueue[i]);
 			else
 			{
-				for (int j = 0; j < queue.size(); j++)
+				size_t j = 0;
+				bool flag = false;
+				for (; j < queue.size(); j++)
 					if (!queue[j]->marked || queue[j]->priority < lsQueue[i]->priority)
 					{
-
 						queue.insert(queue.begin() + j, lsQueue[i]);
+						flag = true;
 						break;
 					}	
+				if (!flag)
+					queue.push_back(lsQueue[i]);
 			}
 		}
 		lsQueue.clear();
+		this->print();
 	}
 	//线程优先级
 	/*for (size_t i = 0; i < NUM_THREAD; i++)
@@ -294,7 +300,7 @@ bool RWCommandQueue::schedulePBFMS(BusPacket **busPacket)
 				sendREF = false;
 				bool closeRow = true;
 				//search for commands going to an open row
-				vector <BusPacket *> &refreshQueue = getCommandQueue(curIsWrite, refreshRank,b);
+				vector <BusPacket *> &refreshQueue = getCommandQueue(false, refreshRank,b);
 				//队列中是否有标记的包
 				bool hasMarkedPacket = false;
 				for (size_t j = 0; j < refreshQueue.size(); j++)
@@ -370,17 +376,80 @@ bool RWCommandQueue::schedulePBFMS(BusPacket **busPacket)
 			sendingREForPRE = true;
 		}
 	}
+	bool hasTosendRead = false;
+	bool foundIssuable = false;
+	if (needToChange && !sendingREForPRE)
+	{
+		for (unsigned r = 0; r < NUM_RANKS; r++)		
+		{
+			for (unsigned b = 0; b < NUM_BANKS; b++)
+			{
+				if (bankStates[r][b].currentBankState == RowActive)
+				{
+					//search for commands going to an open row
+					vector <BusPacket *> &queue = getCommandQueue(false, r, b);
+					//队列中是否有标记的包
+					bool hasMarkedPacket = false;
+					for (size_t j = 0; j < queue.size(); j++)
+						if (queue[j]->marked)
+						{
+							hasMarkedPacket = true;
+							break;
+						}
+					for (size_t j=0;j< queue.size();j++)
+					{
+						BusPacket *packet = queue[j];
+						if (hasMarkedPacket && packet->marked == false)
+							break;
+						//if a command in the queue is going to the same row . . .
+						if (bankStates[r][b].openRowAddress == packet->row &&
+								 r== packet->rank && b == packet->bank)
+						{
+							// . . . and is not an activate . . .
+							if (packet->busPacketType != ACTIVATE)
+							{
+								hasTosendRead = true;
+								// . . . and can be issued . . .
+								if (isIssuable(packet))
+								{
+									//send it out
+									*busPacket = packet;
+									queue.erase(queue.begin()+j);
+									if (hasMarkedPacket)
+									{
+										reqsMarkedPerThread[packet->threadId]--;
+										totalMarkedRequests--;
+									}
+									totalReadRequests--;
+									foundIssuable = true;
+								}
+								break;
+							}
+							else //command is an activate，优先转化为读
+							{
+								//if we've encountered another act, no other command will be of interest
+								break;
+							}
+						}
+					}
+				}
+				if (hasTosendRead)
+					break;
+			}
+			if (hasTosendRead)
+				break;
+		}
+	}
 	//1.每个bank中的请求，如果有被标记，则标记请求行命中优先，否则行命中请求优先
 	//2.标记请求中，高优先级优先
 	//看看能否找到可发送的包
-	if (!sendingREForPRE)
+	if (!needToChange && !sendingREForPRE)
 	{
 		unsigned startingRank = nextRank;
 		unsigned startingBank = nextBank;
-		bool foundIssuable = false;
 		do // round robin over queues
 		{
-			vector<BusPacket *> &queue = getCommandQueue(curIsWrite, nextRank,nextBank);
+			vector<BusPacket *> &queue = getCommandQueue(false, nextRank,nextBank);
 			bool hasMarkedPacket = false;
 			for (size_t i = 0; i < queue.size(); i++)
 				if (queue[i]->marked)
@@ -463,7 +532,6 @@ bool RWCommandQueue::schedulePBFMS(BusPacket **busPacket)
 						break;
 					}
 				}
-				if (foundIssuable) break;
 			}	
 			//if we found something, break out of do-while
 			if (foundIssuable) break;
@@ -475,71 +543,77 @@ bool RWCommandQueue::schedulePBFMS(BusPacket **busPacket)
 			}
 		}
 		while (true);
-
-		//看看能否关闭某行
-		//if nothing was issuable, see if we can issue a PRE to an open bank
-		//	that has no other commands waiting
-		if (!foundIssuable)
-		{
-			//search for banks to close
-			bool sendingPRE = false;
-			unsigned startingRank = nextRankPRE;
-			unsigned startingBank = nextBankPRE;
-
-			do // round robin over all ranks and banks
-			{
-				vector <BusPacket *> &queue = getCommandQueue(curIsWrite, nextRankPRE, nextBankPRE);
-				bool found = false;
-				//check if bank is open
-				if (bankStates[nextRankPRE][nextBankPRE].currentBankState == RowActive)
-				{
-					bool hasMarkedPacket = false;
-					for (size_t i = 0; i < queue.size(); i++)
-						if (queue[i]->marked)
-						{
-							hasMarkedPacket = true;
-							break;
-						}
-					//优先关闭优先级高的请求对应的bank
-					uint16_t firstThread = 0xff;
-					for (size_t i=0;i<queue.size();i++)
-					{
-						if (hasMarkedPacket && queue[i]->marked == false)  //标记的请求优先
-							break;
-						if (queue[i]->marked && firstThread == 0xff)
-							firstThread = queue[i]->threadId;
-						//PRINT("高优先级请求优先");
-						if (hasMarkedPacket && queue[i]->threadId != firstThread)
-							break;
-						if (queue[i]->rank == nextRankPRE && queue[i]->bank == nextBankPRE &&
-								queue[i]->row == bankStates[nextRankPRE][nextBankPRE].openRowAddress)
-						{
-							found = true;
-							break;
-						}
-					}
-
-					//if nothing found going to that bank and row or too many accesses have happend, close it
-					if (!found || rowAccessCounters[nextRankPRE][nextBankPRE]==TOTAL_ROW_ACCESSES)
-					{
-						if (currentClockCycle >= bankStates[nextRankPRE][nextBankPRE].nextPrecharge)
-						{
-							sendingPRE = true;
-							rowAccessCounters[nextRankPRE][nextBankPRE] = 0;
-							*busPacket = new BusPacket(PRECHARGE, 0, 0, 0, nextRankPRE, nextBankPRE, 0, dramsim_log);
-							break;
-						}
-					}
-				}
-				nextRankAndBank(nextRankPRE, nextBankPRE);
-			}
-			while (!(startingRank == nextRankPRE && startingBank == nextBankPRE));
-
-			//if no PREs could be sent, just return false
-			if (!sendingPRE) return false;
-		}
 	}
 
+	//可以转换为写了	
+	if (needToChange && !hasTosendRead)
+	{
+		needToChange = false;
+		curIsWrite = true;
+	}
+
+	//看看能否关闭某行
+	//if nothing was issuable, see if we can issue a PRE to an open bank
+	//	that has no other commands waiting
+	if (!sendingREForPRE && !foundIssuable)
+	{
+		//search for banks to close
+		bool sendingPRE = false;
+		unsigned startingRank = nextRankPRE;
+		unsigned startingBank = nextBankPRE;
+
+		do // round robin over all ranks and banks
+		{
+			vector <BusPacket *> &queue = getCommandQueue(false, nextRankPRE, nextBankPRE);
+			bool found = false;
+			//check if bank is open
+			if (bankStates[nextRankPRE][nextBankPRE].currentBankState == RowActive)
+			{
+				bool hasMarkedPacket = false;
+				for (size_t i = 0; i < queue.size(); i++)
+					if (queue[i]->marked)
+					{
+						hasMarkedPacket = true;
+						break;
+					}
+				//优先关闭优先级高的请求对应的bank
+				unsigned firstThread = 0xff;
+				for (size_t i=0;i<queue.size();i++)
+				{
+					if (hasMarkedPacket && queue[i]->marked == false)  //标记的请求优先
+						break;
+					if (queue[i]->marked && firstThread == 0xff)
+						firstThread = queue[i]->threadId;
+					//PRINT("高优先级请求优先");
+					if (hasMarkedPacket  && queue[i]->threadId != firstThread)
+						break;
+					if (queue[i]->rank == nextRankPRE && queue[i]->bank == nextBankPRE &&
+							queue[i]->row == bankStates[nextRankPRE][nextBankPRE].openRowAddress)
+					{
+						found = true;
+						break;
+					}
+				}
+
+				//if nothing found going to that bank and row or too many accesses have happend, close it
+				if (!found || rowAccessCounters[nextRankPRE][nextBankPRE]==TOTAL_ROW_ACCESSES)
+				{
+					if (currentClockCycle >= bankStates[nextRankPRE][nextBankPRE].nextPrecharge)
+					{
+						sendingPRE = true;
+						rowAccessCounters[nextRankPRE][nextBankPRE] = 0;
+						*busPacket = new BusPacket(PRECHARGE, 0, 0, 0, nextRankPRE, nextBankPRE, 0, dramsim_log);
+						break;
+					}
+				}
+			}
+			nextRankAndBank(nextRankPRE, nextBankPRE);
+		}
+		while (!(startingRank == nextRankPRE && startingBank == nextBankPRE));
+
+		//if no PREs could be sent, just return false
+		if (!sendingPRE) return false;
+	}
 	//sendAct is flag used for posted-cas
 	//  posted-cas is enabled when AL>0
 	//  when sendAct is true, when don't want to increment our indexes
@@ -662,7 +736,7 @@ bool RWCommandQueue::scheduleParbs(BusPacket **busPacket)
 				sendREF = false;
 				bool closeRow = true;
 				//search for commands going to an open row
-				vector <BusPacket *> &refreshQueue = getCommandQueue(curIsWrite, refreshRank,b);
+				vector <BusPacket *> &refreshQueue = getCommandQueue(false, refreshRank,b);
 				//队列中是否有标记的包
 				bool hasMarkedPacket = false;
 				for (size_t j = 0; j < refreshQueue.size(); j++)
@@ -738,17 +812,81 @@ bool RWCommandQueue::scheduleParbs(BusPacket **busPacket)
 			sendingREForPRE = true;
 		}
 	}
+	bool hasTosendRead = false;
+	bool foundIssuable = false;
+	//待转换到写
+	if (needToChange && !sendingREForPRE)
+	{
+		for (unsigned r = 0; r < NUM_RANKS; r++)		
+		{
+			for (unsigned b = 0; b < NUM_BANKS; b++)
+			{
+				if (bankStates[r][b].currentBankState == RowActive)
+				{
+					//search for commands going to an open row
+					vector <BusPacket *> &queue = getCommandQueue(false, r, b);
+					//队列中是否有标记的包
+					bool hasMarkedPacket = false;
+					for (size_t j = 0; j < queue.size(); j++)
+						if (queue[j]->marked)
+						{
+							hasMarkedPacket = true;
+							break;
+						}
+					for (size_t j=0;j< queue.size();j++)
+					{
+						BusPacket *packet = queue[j];
+						if (hasMarkedPacket && packet->marked == false)
+							break;
+						//if a command in the queue is going to the same row . . .
+						if (bankStates[r][b].openRowAddress == packet->row &&
+								 r== packet->rank && b == packet->bank)
+						{
+							// . . . and is not an activate . . .
+							if (packet->busPacketType != ACTIVATE)
+							{
+								hasTosendRead = true;
+								// . . . and can be issued . . .
+								if (isIssuable(packet))
+								{
+									//send it out
+									*busPacket = packet;
+									queue.erase(queue.begin()+j);
+									if (hasMarkedPacket)
+									{
+										reqsMarkedPerThread[packet->threadId]--;
+										totalMarkedRequests--;
+									}
+									totalReadRequests--;
+									foundIssuable = true;
+								}
+								break;
+							}
+							else //command is an activate，优先转化为读
+							{
+								//if we've encountered another act, no other command will be of interest
+								break;
+							}
+						}
+					}
+				}
+				if (hasTosendRead)
+					break;
+			}
+			if (hasTosendRead)
+				break;
+		}
+	}
 	//1.每个bank中的请求，如果有被标记，则标记请求行命中优先，否则行命中请求优先
 	//2.标记请求中，高优先级优先
 	//看看能否找到可发送的包
-	if (!sendingREForPRE)
+	if (!needToChange && !sendingREForPRE)
 	{
 		unsigned startingRank = nextRank;
 		unsigned startingBank = nextBank;
-		bool foundIssuable = false;
 		do // round robin over queues
 		{
-			vector<BusPacket *> &queue = getCommandQueue(curIsWrite, nextRank,nextBank);
+			vector<BusPacket *> &queue = getCommandQueue(false, nextRank,nextBank);
 			bool hasMarkedPacket = false;
 			for (size_t i = 0; i < queue.size(); i++)
 				if (queue[i]->marked)
@@ -842,69 +980,76 @@ bool RWCommandQueue::scheduleParbs(BusPacket **busPacket)
 			}
 		}
 		while (true);
+	}
 
-		//看看能否关闭某行
-		//if nothing was issuable, see if we can issue a PRE to an open bank
-		//	that has no other commands waiting
-		if (!foundIssuable)
+	//可以转换为写了	
+	if (needToChange && !hasTosendRead)
+	{
+		needToChange = false;
+		curIsWrite = true;
+	}
+
+	//看看能否关闭某行
+	//if nothing was issuable, see if we can issue a PRE to an open bank
+	//	that has no other commands waiting
+	if (!sendingREForPRE && !foundIssuable)
+	{
+		//search for banks to close
+		bool sendingPRE = false;
+		unsigned startingRank = nextRankPRE;
+		unsigned startingBank = nextBankPRE;
+
+		do // round robin over all ranks and banks
 		{
-			//search for banks to close
-			bool sendingPRE = false;
-			unsigned startingRank = nextRankPRE;
-			unsigned startingBank = nextBankPRE;
-
-			do // round robin over all ranks and banks
+			vector <BusPacket *> &queue = getCommandQueue(false, nextRankPRE, nextBankPRE);
+			bool found = false;
+			//check if bank is open
+			if (bankStates[nextRankPRE][nextBankPRE].currentBankState == RowActive)
 			{
-				vector <BusPacket *> &queue = getCommandQueue(curIsWrite, nextRankPRE, nextBankPRE);
-				bool found = false;
-				//check if bank is open
-				if (bankStates[nextRankPRE][nextBankPRE].currentBankState == RowActive)
-				{
-					bool hasMarkedPacket = false;
-					for (size_t i = 0; i < queue.size(); i++)
-						if (queue[i]->marked)
-						{
-							hasMarkedPacket = true;
-							break;
-						}
-					//优先关闭优先级高的请求对应的bank
-					unsigned firstThread = 0xff;
-					for (size_t i=0;i<queue.size();i++)
+				bool hasMarkedPacket = false;
+				for (size_t i = 0; i < queue.size(); i++)
+					if (queue[i]->marked)
 					{
-						if (hasMarkedPacket && queue[i]->marked == false)  //标记的请求优先
-							break;
-						if (queue[i]->marked && firstThread == 0xff)
-							firstThread = queue[i]->threadId;
-						//PRINT("高优先级请求优先");
-						if (hasMarkedPacket  && queue[i]->threadId != firstThread)
-							break;
-						if (queue[i]->rank == nextRankPRE && queue[i]->bank == nextBankPRE &&
-								queue[i]->row == bankStates[nextRankPRE][nextBankPRE].openRowAddress)
-						{
-							found = true;
-							break;
-						}
+						hasMarkedPacket = true;
+						break;
 					}
-
-					//if nothing found going to that bank and row or too many accesses have happend, close it
-					if (!found || rowAccessCounters[nextRankPRE][nextBankPRE]==TOTAL_ROW_ACCESSES)
+				//优先关闭优先级高的请求对应的bank
+				unsigned firstThread = 0xff;
+				for (size_t i=0;i<queue.size();i++)
+				{
+					if (hasMarkedPacket && queue[i]->marked == false)  //标记的请求优先
+						break;
+					if (queue[i]->marked && firstThread == 0xff)
+						firstThread = queue[i]->threadId;
+					//PRINT("高优先级请求优先");
+					if (hasMarkedPacket  && queue[i]->threadId != firstThread)
+						break;
+					if (queue[i]->rank == nextRankPRE && queue[i]->bank == nextBankPRE &&
+							queue[i]->row == bankStates[nextRankPRE][nextBankPRE].openRowAddress)
 					{
-						if (currentClockCycle >= bankStates[nextRankPRE][nextBankPRE].nextPrecharge)
-						{
-							sendingPRE = true;
-							rowAccessCounters[nextRankPRE][nextBankPRE] = 0;
-							*busPacket = new BusPacket(PRECHARGE, 0, 0, 0, nextRankPRE, nextBankPRE, 0, dramsim_log);
-							break;
-						}
+						found = true;
+						break;
 					}
 				}
-				nextRankAndBank(nextRankPRE, nextBankPRE);
-			}
-			while (!(startingRank == nextRankPRE && startingBank == nextBankPRE));
 
-			//if no PREs could be sent, just return false
-			if (!sendingPRE) return false;
+				//if nothing found going to that bank and row or too many accesses have happend, close it
+				if (!found || rowAccessCounters[nextRankPRE][nextBankPRE]==TOTAL_ROW_ACCESSES)
+				{
+					if (currentClockCycle >= bankStates[nextRankPRE][nextBankPRE].nextPrecharge)
+					{
+						sendingPRE = true;
+						rowAccessCounters[nextRankPRE][nextBankPRE] = 0;
+						*busPacket = new BusPacket(PRECHARGE, 0, 0, 0, nextRankPRE, nextBankPRE, 0, dramsim_log);
+						break;
+					}
+				}
+			}
+			nextRankAndBank(nextRankPRE, nextBankPRE);
 		}
+		while (!(startingRank == nextRankPRE && startingBank == nextBankPRE));
+
+		//if no PREs could be sent, just return false
+		if (!sendingPRE) return false;
 	}
 
 	//sendAct is flag used for posted-cas
@@ -968,17 +1113,17 @@ bool RWCommandQueue::pop(BusPacket **busPacket)
 	//1.读请求为0，并且写队列长度超过WRITE_LOW_THEROLD, 由读转换到写
 	//2.写队列长度达到WRITE_HIGHT_THEROLD，读队列个数是偶数个，由读转换到写
 	//3.上一个请求是写，并且写队列不为空，继续写
-	if ((totalReadRequests == 0 && writeQueues.size() >  WRITE_LOW_THEROLD) || 
-			(totalReadRequests % 2 == 0 && writeQueues.size() >= WRITE_HIGHT_THEROLD) || 
-			(preIsWrite && writeQueues.size() > 0))
-		preIsWrite = curIsWrite = true;
+	if ((totalReadRequests == 0 && writeQueues.size() >  WRITE_LOW_THEROLD) || (curIsWrite && writeQueues.size() > 0)) 
+		curIsWrite = true;
+	else if (!curIsWrite && writeQueues.size() >= WRITE_HIGHT_THEROLD) 
+		needToChange = true;	
 	else
-		preIsWrite = curIsWrite = false;
+		curIsWrite = false;
 	
-	if (schedulingPolicy == PBFMS && lsQueue.size() && curIsWrite && writeQueues.size() <= WRITE_LOW_THEROLD && writeQueues.size() % 2 == 0)
-	{
-		preIsWrite = curIsWrite = false;
-	}
+	if (schedulingPolicy == PBFMS && lsQueue.size() && curIsWrite && writeQueues.size() <= WRITE_LOW_THEROLD)
+		needToChange = true;
+
+	//std::cout << "curIsWrite : " << curIsWrite << std::endl;
 	if (!curIsWrite && schedulingPolicy == PARBS)
 		return scheduleParbs(busPacket);
 	else if (!curIsWrite && schedulingPolicy == PBFMS)
@@ -1020,8 +1165,6 @@ bool RWCommandQueue::pop(BusPacket **busPacket)
 									//send it out
 									*busPacket = packet;
 									refreshQueue.erase(refreshQueue.begin()+j);
-									if (!curIsWrite)
-										totalReadRequests--;
 									sendingREForPRE = true;
 								}
 								break;
@@ -1063,12 +1206,59 @@ bool RWCommandQueue::pop(BusPacket **busPacket)
 				sendingREForPRE = true;
 			}
 		}
+		bool hasToSendReadOrWrite = false;
+		bool foundIssuable = false;
+		if (!sendingREForPRE && needToChange)
+		{
+			for (unsigned r = 0; r < NUM_RANKS; r++)		
+			{
+				for (unsigned b = 0; b < NUM_BANKS; b++)
+				{
+					if (bankStates[r][b].currentBankState == RowActive)
+					{
+						//search for commands going to an open row
+						vector <BusPacket *> &queue = getCommandQueue(curIsWrite,r,b);
+						for (size_t j=0;j< queue.size();j++)
+						{
+							BusPacket *packet = queue[j];
+							//if a command in the queue is going to the same row . . .
+							if (bankStates[r][b].openRowAddress == packet->row &&
+									 r== packet->rank && b == packet->bank)
+							{
+								// . . . and is not an activate . . .
+								if (packet->busPacketType != ACTIVATE)
+								{
+									hasToSendReadOrWrite= true;
+									// . . . and can be issued . . .
+									if (isIssuable(packet))
+									{
+										//send it out
+										*busPacket = packet;
+										queue.erase(queue.begin()+j);
+										foundIssuable = true;
+									}
+									break;
+								}
+								else //command is an activate，优先转化为读
+								{
+									//if we've encountered another act, no other command will be of interest
+									break;
+								}
+							}
+						}
+					}
+					if (hasToSendReadOrWrite)
+						break;
+				}
+				if (hasToSendReadOrWrite)
+					break;
+			}
+		}
 		//看看能否找到可发送的包
-		if (!sendingREForPRE)
+		if (!needToChange && !sendingREForPRE)
 		{
 			unsigned startingRank = nextRank;
 			unsigned startingBank = nextBank;
-			bool foundIssuable = false;
 			do // round robin over queues
 			{
 				vector<BusPacket *> &queue = getCommandQueue(curIsWrite, nextRank,nextBank);
@@ -1137,54 +1327,64 @@ bool RWCommandQueue::pop(BusPacket **busPacket)
 				}
 			}
 			while (true);
+		}
+		
 
-			//看看能否关闭某行
-			//if nothing was issuable, see if we can issue a PRE to an open bank
-			//	that has no other commands waiting
-			if (!foundIssuable)
+		//看看能否关闭某行
+		//if nothing was issuable, see if we can issue a PRE to an open bank
+		//	that has no other commands waiting
+		if (!sendingREForPRE && !foundIssuable)
+		{
+			//search for banks to close
+			bool sendingPRE = false;
+			unsigned startingRank = nextRankPRE;
+			unsigned startingBank = nextBankPRE;
+
+			do // round robin over all ranks and banks
 			{
-				//search for banks to close
-				bool sendingPRE = false;
-				unsigned startingRank = nextRankPRE;
-				unsigned startingBank = nextBankPRE;
-
-				do // round robin over all ranks and banks
+				vector <BusPacket *> &queue = getCommandQueue(curIsWrite, nextRankPRE, nextBankPRE);
+				bool found = false;
+				//check if bank is open
+				if (bankStates[nextRankPRE][nextBankPRE].currentBankState == RowActive)
 				{
-					vector <BusPacket *> &queue = getCommandQueue(curIsWrite, nextRankPRE, nextBankPRE);
-					bool found = false;
-					//check if bank is open
-					if (bankStates[nextRankPRE][nextBankPRE].currentBankState == RowActive)
+					for (size_t i=0;i<queue.size();i++)
 					{
-						for (size_t i=0;i<queue.size();i++)
+						//if there is something going to that bank and row, then we don't want to send a PRE
+						if (queue[i]->rank == nextRankPRE && queue[i]->bank == nextBankPRE &&
+								queue[i]->row == bankStates[nextRankPRE][nextBankPRE].openRowAddress)
 						{
-							//if there is something going to that bank and row, then we don't want to send a PRE
-							if (queue[i]->rank == nextRankPRE && queue[i]->bank == nextBankPRE &&
-									queue[i]->row == bankStates[nextRankPRE][nextBankPRE].openRowAddress)
-							{
-								found = true;
-								break;
-							}
-						}
-
-						//if nothing found going to that bank and row or too many accesses have happend, close it
-						if (!found || rowAccessCounters[nextRankPRE][nextBankPRE]==TOTAL_ROW_ACCESSES)
-						{
-							if (currentClockCycle >= bankStates[nextRankPRE][nextBankPRE].nextPrecharge)
-							{
-								sendingPRE = true;
-								rowAccessCounters[nextRankPRE][nextBankPRE] = 0;
-								*busPacket = new BusPacket(PRECHARGE, 0, 0, 0, nextRankPRE, nextBankPRE, 0, dramsim_log);
-								break;
-							}
+							found = true;
+							break;
 						}
 					}
-					nextRankAndBank(nextRankPRE, nextBankPRE);
-				}
-				while (!(startingRank == nextRankPRE && startingBank == nextBankPRE));
 
-				//if no PREs could be sent, just return false
-				if (!sendingPRE) return false;
+					//if nothing found going to that bank and row or too many accesses have happend, close it
+					if (!found || rowAccessCounters[nextRankPRE][nextBankPRE]==TOTAL_ROW_ACCESSES)
+					{
+						if (currentClockCycle >= bankStates[nextRankPRE][nextBankPRE].nextPrecharge)
+						{
+							sendingPRE = true;
+							rowAccessCounters[nextRankPRE][nextBankPRE] = 0;
+							*busPacket = new BusPacket(PRECHARGE, 0, 0, 0, nextRankPRE, nextBankPRE, 0, dramsim_log);
+							break;
+						}
+					}
+				}
+				nextRankAndBank(nextRankPRE, nextBankPRE);
 			}
+			while (!(startingRank == nextRankPRE && startingBank == nextBankPRE));
+			if (needToChange && !hasToSendReadOrWrite)
+			{
+				curIsWrite = !curIsWrite;
+				needToChange = false;
+			}
+			//if no PREs could be sent, just return false
+			if (!sendingPRE) return false;
+		}
+		if (needToChange && !hasToSendReadOrWrite)
+		{
+			curIsWrite = !curIsWrite;
+			needToChange = false;
 		}
 	}
 

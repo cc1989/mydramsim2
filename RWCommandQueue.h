@@ -99,8 +99,8 @@ private:
 	vector< vector<unsigned> > rowAccessCounters;
 
 	bool sendAct;
-	bool preIsWrite;
 	bool curIsWrite;
+	bool needToChange;
 	unsigned totalReadRequests;
 
 	//par-bs

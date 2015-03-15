@@ -820,6 +820,7 @@ void MemoryController::statisticsMPKI()
 		lsNum = 0;
 		PRINT("延迟敏感型线程：");
 		for (size_t i = 0; i < lsThread.size(); i++)
+		{
 			if (curMPKI + MPKI[lsThread[i]] < MPKIA) 
 			{
 				curMPKI += MPKI[lsThread[i]];
@@ -828,8 +829,8 @@ void MemoryController::statisticsMPKI()
 			}
 			else
 				break;
+		}
 	}
-	//判断当前请求是否是延迟敏感型线程的请sLSRequesthasLSRequest请求
 }
 //allows outside source to make request of memory system
 bool MemoryController::addTransaction(Transaction *trans)

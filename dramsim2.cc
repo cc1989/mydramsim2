@@ -44,6 +44,7 @@
 #include "debug/Drain.hh"
 #include "mem/dramsim2.hh"
 #include "sim/system.hh"
+//#include <fstream.h>
 
 DRAMSim2::DRAMSim2(const Params* p) :
     AbstractMemory(p),
@@ -159,6 +160,7 @@ DRAMSim2::recvAtomic(PacketPtr pkt)
 {
     access(pkt);
 	printCount++;
+	std::cout << "recvAtomic" << std::endl;
 	if (printCount % 10000 == 0)
 	{
 		for (int i = 0; i < 8; i++)	
@@ -247,17 +249,25 @@ DRAMSim2::recvTimingReq(PacketPtr pkt)
 		//_system->
 		//std::cout << "outstandingWrites:" << outstandingWrites.size()<< " type" << pkt->isWrite() << " addr:" << std::hex << pkt->getAddr() << " masterId:" << pkt->req->masterId() << std::endl;
 		printCount++;
-		if (printCount % 10000 == 0)
+		if (printCount % 100000 == 0)
 		{
 			for (int i = 0; i < 8; i++)	
-				std::cout << "CPU" << i << " insCount:" << _system->cpuNumInsts[i] << std::endl;
+				if ( _system->cpuNumInsts[i])
+					std::cout << "CPU" << i << " insCount:" << _system->cpuNumInsts[i] << std::endl;
 		}
 		//判断是否有负载运行了10亿条指令，如果是，则打印负载完成的时间
+		//ofstream resultFile("result.txt", ios::out | ios::app);
 		for (int i = 0; i < 8; i++)	
-			if (_system->cpuNumInsts[i] >= 1000000000)
-				std::cout <<  "workload" << i << "end. tick = " << curTick() << ", insCount = " << _system->cpuNumInsts[i] << std::endl;
-		if (pkt->isWrite())
+			if (_system->cpuNumInsts[i] >= 1000000000 && !_system->isEnd[i])
+			{
+				std::cout <<  "workload" << i << " end. tick = " << curTick() << ", insCount = " << _system->cpuNumInsts[i] << std::endl;
+				_system->isEnd[i] = true;
+			}
+		/*if (pkt->isWrite())
 			wrapper.enqueue(pkt->isWrite(), pkt->getAddr());
+		else*/
+		if (pkt->req->masterId() < 5)
+			wrapper.enqueue(pkt->isWrite(), pkt->getAddr(), 0);
 		else
 			wrapper.enqueue(pkt->isWrite(), pkt->getAddr(), (uint8_t)((pkt->req->masterId() - 5) / 4));
         return true;
