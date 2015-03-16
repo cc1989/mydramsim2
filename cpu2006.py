@@ -4,8 +4,8 @@ import m5
 from m5.objects import *
 m5.util.addToPath('../common')
 
-binary_dir = '/home/cc/spec/benchspec/CPU2006/'
-data_dir = '/home/cc/spec/benchspec/CPU2006/'
+binary_dir = '/home/f103/cc/spec/benchspec/CPU2006/'
+data_dir = '/home/f103/cc/spec/benchspec/CPU2006/'
 
 #====================
 #400.perlbench
@@ -26,8 +26,8 @@ bzip2.output = 'drayer.jpg.out'
 #403.gcc
 gcc = LiveProcess()
 gcc.executable =  binary_dir+'403.gcc/exe/gcc_base.gcc41-64bit'
-data=data_dir+'403.gcc/data/test/input/cccp.i'
-output='/home/wyj/installspec2006/benchspec/CPU2006/403.gcc/data/test/output/cccp.s'
+data=data_dir+'403.gcc/data/test/input/cccp.in'
+output=data_dir+'403.gcc/data/test/output/cccp.s'
 gcc.cmd = [gcc.executable] + [data]+['-o',output]
 gcc.output = 'ccc.out'
 
@@ -124,7 +124,7 @@ soplex.output = 'test.out'
 #453.povray
 povray=LiveProcess()
 povray.executable =  binary_dir+'453.povray/exe/povray_base.gcc41-64bit'
-data=data_dir+'453.povray/data/test/input/SPEC-benchmark-test.ini'
+data=data_dir+'453.povray/data/test/input/SPEC-benchmark-test.pov'
 #povray.cmd = [povray.executable]+['SPEC-benchmark-test.ini']
 povray.cmd = [povray.executable]+[data]
 povray.output = 'SPEC-benchmark-test.stdout'
@@ -132,7 +132,7 @@ povray.output = 'SPEC-benchmark-test.stdout'
 #454.calculix
 calculix=LiveProcess()
 calculix.executable =  binary_dir+'454.calculix/exe/calculix_base.gcc41-64bit'
-data=data_dir+'454.calculix/data/test/input/beampic'
+data=data_dir+'454.calculix/data/test/input/beampic.inp'
 calculix.cmd = [calculix.executable]+['-i',data]
 calculix.output = 'beampic.log'
 
@@ -187,26 +187,30 @@ omnetpp.output = 'omnetpp.log'
 #473.astar
 astar=LiveProcess()
 astar.executable =  binary_dir+'473.astar/exe/astar_base.gcc41-64bit'
-astar.cmd = [astar.executable]+['lake.cfg']
+data=data_dir+'473.astar/data/test/input/lake.cfg'
+astar.cmd = [astar.executable]+[data]
 astar.output = 'lake.out'
 
 #====================
 #481.wrf
 wrf=LiveProcess()
 wrf.executable =  binary_dir+'481.wrf/exe/wrf_base.gcc41-64bit'
-wrf.cmd = [wrf.executable]+['namelist.input']
+data=data_dir+'481.wrf/data/test/input/namelist.input'
+wrf.cmd = [wrf.executable]+[data]
 wrf.output = 'rsl.out.0000'
 
 #482.sphinx
 sphinx3=LiveProcess()
 sphinx3.executable =  binary_dir+'482.sphinx3/exe/sphinx_livepretend_base.gcc41-64bit'
-sphinx3.cmd = [sphinx3.executable]+['ctlfile', '.', 'args.an4']
+data=data_dir+'482.sphinx3/data/test/input/'
+sphinx3.cmd = [sphinx3.executable]+[data+'an406-fcaw-b.be.raw', '.', data+'args.an4']
 sphinx3.output = 'an4.out'
 
 #483.xalancbmk
 xalancbmk=LiveProcess()
 xalancbmk.executable =  binary_dir+'483.xalancbmk/exe/Xalan_base.gcc41-64bit'
-xalancbmk.cmd = [xalancbmk.executable]+['-v','test.xml','xalanc.xsl']
+data=data_dir+'483.xalancbmk/data/test/input/'
+xalancbmk.cmd = [xalancbmk.executable]+['-v',data+'test.xml',data+'xalanc.xsl']
 xalancbmk.output = 'test.out'
 
 #998.specrand

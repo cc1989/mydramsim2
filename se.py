@@ -159,8 +159,8 @@ def get_processes(options):
             process = cpu2006.astar
         elif wrkld == 'wrf':
             process = cpu2006.wrf
-        elif wrkld == 'sphinx':
-            process = cpu2006.sphinx
+        elif wrkld == 'sphinx3':
+            process = cpu2006.sphinx3
         elif wrkld == 'xalancbmk':
             process = cpu2006.xalancbmk
         elif wrkld == 'specrandi':
